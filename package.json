@@ -6,8 +6,10 @@
     "preinstall": "node scripts/preinstall.mjs",
     "dev": "pnpm --filter @workspace/weather-radar run dev",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "build:pages": "node scripts/build-pages.mjs",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./apps/**\" --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
+    "check:folders": "node scripts/check-folder-limits.mjs"
   },
   "private": true,
   "devDependencies": {

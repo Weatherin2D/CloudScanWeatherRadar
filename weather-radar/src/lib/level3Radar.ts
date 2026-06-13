@@ -1,6 +1,6 @@
 import { proxiedApiBase } from "./apiProxy";
 import { iemRidgeSector } from "./iemRadar";
-import { level3ListingHours } from "@/lib/radarFrameLimits";
+import { stationListingHours } from "@/lib/radarFrameLimits";
 
 export const LEVEL3_S3_BASE = proxiedApiBase(
   "/api/nexrad-l3",
@@ -44,9 +44,10 @@ export async function fetchLevel3Frames(
   const sector = level3Sector(stationId);
   const prefix = `${sector}_${productCode}_`;
   const keys: string[] = [];
-  let startAfter = recentLevel3StartAfter(prefix, level3ListingHours(maxFrames));
+  let startAfter = recentLevel3StartAfter(prefix, stationListingHours(maxFrames));
 
-  for (let page = 0; page < 4 && keys.length < maxFrames * 2; page++) {
+  const maxPages = Math.min(10, Math.max(4, Math.ceil(maxFrames / 150)));
+  for (let page = 0; page < maxPages && keys.length < maxFrames * 2; page++) {
     const url =
       `${LEVEL3_S3_BASE}/?list-type=2&prefix=${encodeURIComponent(prefix)}` +
       `&max-keys=1000&start-after=${encodeURIComponent(startAfter)}`;

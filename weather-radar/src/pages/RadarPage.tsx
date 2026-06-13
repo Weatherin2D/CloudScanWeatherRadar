@@ -62,6 +62,7 @@ import {
   DEFAULT_RADAR_FRAME_LIMIT,
   MAX_GLOBAL_RADAR_FRAME_LIMIT,
   MAX_STATION_RADAR_FRAME_LIMIT,
+  STATION_RADAR_LOOKBACK_HOURS,
   sliceRecentGlobalFrames,
 } from "@/lib/radarFrameLimits";
 import SatelliteOverlayLayer from "@/components/SatelliteOverlayLayer";
@@ -235,9 +236,12 @@ function SettingsPanel({
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-sm text-gray-300">Station Frame Count</label>
                 <span className="text-xs text-blue-400 font-mono">
-                  {clampStationFrameLimit(stationFrameLimit)} / {MAX_STATION_RADAR_FRAME_LIMIT} frames
+                  {clampStationFrameLimit(stationFrameLimit)} / {MAX_STATION_RADAR_FRAME_LIMIT}
                 </span>
               </div>
+              <p className="text-[10px] text-gray-500 mb-2">
+                Slider maximum loads {STATION_RADAR_LOOKBACK_HOURS} hours of recent scans
+              </p>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-500 w-7">1</span>
                 <input

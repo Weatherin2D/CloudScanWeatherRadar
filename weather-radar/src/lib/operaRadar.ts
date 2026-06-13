@@ -1,7 +1,7 @@
 import { proxiedApiBase } from "./apiProxy";
 import { OPERA_STATION_MAP } from "./operaStationMap";
 import { operaElevationForTilt } from "./radarTilt";
-import { level3ListingHours } from "@/lib/radarFrameLimits";
+import { stationListingHours } from "@/lib/radarFrameLimits";
 import type { OdimScanMeta } from "./renderPolar";
 
 export const METEOGATE_BASE = proxiedApiBase(
@@ -43,7 +43,7 @@ export async function fetchOperaFrames(
 
   const targetEl = operaElevationForTilt(tiltIndex);
 
-  const { start, end } = toIsoRange(level3ListingHours(maxFrames));
+  const { start, end } = toIsoRange(stationListingHours(maxFrames));
   const dt = encodeURIComponent(`${start}/${end}`);
   const url =
     `${METEOGATE_BASE}/eu-eumetnet-weather-radar/collections/observations/locations/` +

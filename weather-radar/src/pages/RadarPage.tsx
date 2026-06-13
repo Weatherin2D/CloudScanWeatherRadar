@@ -55,7 +55,6 @@ import CrossSectionTool, { MapBoundsReporter } from "@/components/CrossSectionTo
 import CrossSectionPanel from "@/components/CrossSectionPanel";
 import RhiCurtainOverlay from "@/components/RhiCurtainOverlay";
 import RadarMapPane from "@/components/RadarMapPane";
-import MapScrollLimits from "@/components/MapScrollLimits";
 import { MAP_MAX_BOUNDS } from "@/lib/mapConfig";
 import {
   clampFrameLimit,
@@ -2045,7 +2044,6 @@ export default function RadarPage() {
             maxBounds={MAP_MAX_BOUNDS} maxBoundsViscosity={1.0}>
 
             <TileLayer url={tileLayers[mapType]} noWrap />
-            <MapScrollLimits />
             <MapViewportTracker onZoom={setMapZoom} />
 
             {showSatelliteOverlay && (

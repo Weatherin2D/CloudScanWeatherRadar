@@ -14,7 +14,6 @@ import { useOperaRadarFrames } from "@/hooks/useOperaRadarFrames";
 import StationRadarLayer from "@/components/StationRadarLayer";
 import SatelliteOverlayLayer from "@/components/SatelliteOverlayLayer";
 import MapFlyTo from "@/components/MapFlyTo";
-import MapScrollLimits from "@/components/MapScrollLimits";
 import MapViewSync, { type MapViewState } from "@/components/MapViewSync";
 import CrossSectionTool from "@/components/CrossSectionTool";
 import { MAP_MAX_BOUNDS } from "@/lib/mapConfig";
@@ -181,7 +180,6 @@ export default function RadarMapPane({
           maxBoundsViscosity={1.0}
         >
           <TileLayer url={TILE_URLS[mapType]} noWrap />
-          <MapScrollLimits />
           {satelliteOverlayEnabled && (
             <SatelliteOverlayLayer
               enabled

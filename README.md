@@ -13,9 +13,9 @@ The app runs at `http://localhost:20405`.
 
 ## GitHub Pages
 
-The site is built from `apps/weather-radar` and deployed with GitHub Actions.
+The site is built from `weather-radar/` and deployed with GitHub Actions.
 
-Project layout keeps each top-level folder under GitHub’s 100-file tree limit (`artifacts/` holds mockup and API packages; the radar app lives in `apps/`).
+Project layout keeps each top-level folder under GitHub’s 100-file tree limit (`artifacts/` holds mockup and API packages; the radar app lives in `weather-radar/`).
 
 ### One-time setup
 
@@ -47,10 +47,10 @@ To test a specific repo path locally:
 
 ```bash
 # PowerShell
-$env:BASE_PATH="/Global-Weather-Watch/"; pnpm build:pages
+$env:BASE_PATH="/CloudScanWeatherRadar/"; pnpm build:pages
 
 # bash
-BASE_PATH=/Global-Weather-Watch/ pnpm build:pages
+BASE_PATH=/CloudScanWeatherRadar/ pnpm build:pages
 ```
 
 ## Notes

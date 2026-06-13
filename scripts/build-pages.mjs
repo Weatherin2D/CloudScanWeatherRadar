@@ -9,7 +9,7 @@ function pagesBasePath() {
   const repo =
     process.env.GITHUB_REPOSITORY?.split("/")[1] ??
     process.argv[2] ??
-    "Global-Weather-Watch";
+    "CloudScanWeatherRadar";
   return repo.endsWith(".github.io") ? "/" : `/${repo}/`;
 }
 

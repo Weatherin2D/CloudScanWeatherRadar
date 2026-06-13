@@ -1,4 +1,5 @@
 import { getRadarProduct, type RadarDataSource, type RadarProduct } from "@/lib/radarProducts";
+import { GLOBAL_IEM_PRODUCT, GLOBAL_IEM_RADAR } from "@/lib/globalRadar";
 import { parseLevel3 } from "@/lib/level3Parse";
 import { level3ObjectUrl } from "@/lib/level3Radar";
 import { loadOdimScan } from "@/lib/operaRadar";
@@ -107,6 +108,15 @@ export async function probeRadarPixel(
   if (ctx.mode === "overview" || ctx.mode === "alerts") {
     if (ctx.rainViewerFramePath) {
       value = await sampleRainViewerDbz(lat, lon, ctx.rainViewerFramePath, zoom);
+    } else if (ctx.iemTmsId) {
+      value = await sampleIemProduct(
+        lat,
+        lon,
+        GLOBAL_IEM_RADAR,
+        GLOBAL_IEM_PRODUCT,
+        ctx.iemTmsId,
+        zoom,
+      );
     }
   } else if (ctx.mode === "station" && product && ctx.stationId) {
     if (ctx.dataSource === "iem" && ctx.iemTmsId) {

@@ -14,6 +14,7 @@ import {
   COUNTRY_FLAGS,
   type RadarStation,
 } from "@/data/stations";
+import { useGlobalRadarFrames } from "@/hooks/useGlobalRadarFrames";
 import { useNWSStations } from "@/hooks/useNWSStations";
 import { useStationRadarFrames } from "@/hooks/useStationRadarFrames";
 import { useLevel3RadarFrames } from "@/hooks/useLevel3RadarFrames";
@@ -42,8 +43,7 @@ import StationMarkers from "@/components/StationMarkers";
 import StationRadarLayer, { type StationRadarStatus } from "@/components/StationRadarLayer";
 import LightningLayer from "@/components/LightningLayer";
 import ColorScaleEditor from "@/components/ColorScaleEditor";
-import CanvasRainViewerLayer from "@/components/CanvasRainViewerLayer";
-import StandardRainViewerLayer from "@/components/StandardRainViewerLayer";
+import GlobalRadarLayer from "@/components/GlobalRadarLayer";
 import MapFlyTo from "@/components/MapFlyTo";
 import MapDrawingLayer, { type DrawTool } from "@/components/MapDrawingLayer";
 import DrawingToolbar from "@/components/DrawingToolbar";
@@ -62,8 +62,7 @@ import {
   DEFAULT_RADAR_FRAME_LIMIT,
   MAX_GLOBAL_RADAR_FRAME_LIMIT,
   MAX_STATION_RADAR_FRAME_LIMIT,
-  STATION_RADAR_LOOKBACK_HOURS,
-  sliceRecentGlobalFrames,
+  RADAR_LOOKBACK_HOURS,
 } from "@/lib/radarFrameLimits";
 import SatelliteOverlayLayer from "@/components/SatelliteOverlayLayer";
 import PixelProbeTool from "@/components/PixelProbeTool";
@@ -103,8 +102,6 @@ const Level3RadarLayer = lazy(() => import("@/components/Level3RadarLayer"));
 const OperaRadarLayer = lazy(() => import("@/components/OperaRadarLayer"));
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-interface RainViewerFrame { time: number; path: string }
-
 // ─── RainViewer color schemes ─────────────────────────────────────────────────
 const COLOR_SCHEMES = [
   { id: 0, label: "Black & White",   preview: "linear-gradient(to right,#111,#888,#fff)" },
@@ -157,12 +154,11 @@ interface AppSettings {
 }
 
 function SettingsPanel({
-  settings, onChange, onClose, maxGlobalFrames,
+  settings, onChange, onClose,
 }: {
   settings: AppSettings;
   onChange: (patch: Partial<AppSettings>) => void;
   onClose: () => void;
-  maxGlobalFrames: number;
 }) {
   const {
     animSpeed, globalFrameLimit, stationFrameLimit, colorScheme, customStops = DEFAULT_CUSTOM_STOPS,
@@ -214,21 +210,24 @@ function SettingsPanel({
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-sm text-gray-300">Global Frame Count</label>
                 <span className="text-xs text-blue-400 font-mono">
-                  {clampGlobalFrameLimit(globalFrameLimit, maxGlobalFrames)} / {maxGlobalFrames} frames
+                  {clampGlobalFrameLimit(globalFrameLimit)} / {MAX_GLOBAL_RADAR_FRAME_LIMIT}
                 </span>
               </div>
+              <p className="text-[10px] text-gray-500 mb-2">
+                Slider maximum loads {RADAR_LOOKBACK_HOURS} hours (RainViewer worldwide + IEM US archive)
+              </p>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-500 w-7">1</span>
                 <input
                   type="range"
                   min={1}
-                  max={maxGlobalFrames}
+                  max={MAX_GLOBAL_RADAR_FRAME_LIMIT}
                   step={1}
-                  value={clampGlobalFrameLimit(globalFrameLimit, maxGlobalFrames)}
+                  value={clampGlobalFrameLimit(globalFrameLimit)}
                   onChange={e => onChange({ globalFrameLimit: Number(e.target.value) })}
                   className="flex-1 accent-blue-500 h-1.5"
                 />
-                <span className="text-xs text-gray-500 w-7">{maxGlobalFrames}</span>
+                <span className="text-xs text-gray-500 w-7">{MAX_GLOBAL_RADAR_FRAME_LIMIT}</span>
               </div>
             </div>
 
@@ -240,7 +239,7 @@ function SettingsPanel({
                 </span>
               </div>
               <p className="text-[10px] text-gray-500 mb-2">
-                Slider maximum loads {STATION_RADAR_LOOKBACK_HOURS} hours of recent scans
+                Slider maximum loads {RADAR_LOOKBACK_HOURS} hours of recent scans
               </p>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-500 w-7">1</span>
@@ -838,7 +837,6 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 export default function RadarPage() {
   const [mode, setMode]                 = useState<"overview" | "station" | "alerts" | "models">("overview");
-  const [frames, setFrames]             = useState<RainViewerFrame[]>([]);
   const [frameIndex, setFrameIndex]     = useState(0);
   const [playing, setPlaying]           = useState(true);
   const [opacity, setOpacity]           = useState(0.8);
@@ -948,6 +946,14 @@ export default function RadarPage() {
     [settings.customStops, reflectivityFade],
   );
 
+  const { frames: displayFrames, loading: globalFramesLoading } = useGlobalRadarFrames(
+    settings.globalFrameLimit,
+  );
+
+  useEffect(() => {
+    if (!globalFramesLoading) setLoading(false);
+  }, [globalFramesLoading]);
+
   const { stations: usStations, loading: usLoading } = useNWSStations();
   const stationForHooks = mode === "station" ? selectedStation : null;
   const { frames: stationFrames, loading: stationFramesLoading } = useStationRadarFrames(
@@ -1045,53 +1051,6 @@ export default function RadarPage() {
     { id: "watch", label: "Watches" },
     { id: "advisory", label: "Advisories" },
   ] as const;
-
-  // Fetch RainViewer frames (initial + periodic refresh)
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async (initial: boolean) => {
-      if (initial) setLoading(true);
-      try {
-        const r = await fetch("https://api.rainviewer.com/public/weather-maps.json");
-        const data = await r.json();
-        if (cancelled) return;
-        const past: RainViewerFrame[] = (data.radar?.past ?? []).map((f: { time: number; path: string }) => ({
-          time: f.time,
-          path: f.path,
-        }));
-        const cappedPast = past.slice(-MAX_GLOBAL_RADAR_FRAME_LIMIT);
-        setFrames(() => {
-          if (initial) {
-            setFrameIndex(cappedPast.length > 0 ? cappedPast.length - 1 : 0);
-          }
-          return cappedPast;
-        });
-      } catch {
-        // keep existing frames on refresh failure
-      } finally {
-        if (!cancelled && initial) setLoading(false);
-      }
-    };
-
-    load(true);
-    const timer = setInterval(() => load(false), RAINVIEWER_REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, []);
-
-  const maxGlobalFrames = useMemo(
-    () => Math.max(1, Math.min(MAX_GLOBAL_RADAR_FRAME_LIMIT, frames.length || MAX_GLOBAL_RADAR_FRAME_LIMIT)),
-    [frames.length],
-  );
-
-  // Derive display frames from globalFrameLimit setting
-  const displayFrames = useMemo(
-    () => sliceRecentGlobalFrames(frames, settings.globalFrameLimit),
-    [frames, settings.globalFrameLimit],
-  );
 
   const activeStationFrames = useMemo(() => {
     if (mode !== "station" || !selectedStation) return [];
@@ -1372,9 +1331,10 @@ export default function RadarPage() {
     };
 
     if (mode === "overview" || mode === "alerts") {
-      const rvFrame = displayFrames[Math.min(frameIndex, displayFrames.length - 1)];
-      if (rvFrame && globalRadarEnabled) {
-        ctx.rainViewerFramePath = rvFrame.path;
+      const gFrame = displayFrames[Math.min(frameIndex, displayFrames.length - 1)];
+      if (gFrame && globalRadarEnabled) {
+        if (gFrame.rainViewerPath) ctx.rainViewerFramePath = gFrame.rainViewerPath;
+        else if (gFrame.iemTmsId) ctx.iemTmsId = gFrame.iemTmsId;
       }
     } else if (mode === "station" && selectedStation) {
       ctx.product = selectedProduct;
@@ -1760,7 +1720,6 @@ export default function RadarPage() {
           settings={settings}
           onChange={patchSettings}
           onClose={() => setSettingsOpen(false)}
-          maxGlobalFrames={maxGlobalFrames}
         />
       )}
 
@@ -2059,22 +2018,16 @@ export default function RadarPage() {
             )}
 
             {mode === "overview" || mode === "alerts" ? (
-              globalRadarEnabled ? (
-                isCustomScale ? (
-                  <CanvasRainViewerLayer
-                    frames={displayFrames}
-                    frameIndex={frameIndex}
-                    opacity={opacity}
-                    lut={rainViewerLUT}
-                  />
-                ) : (
-                  <StandardRainViewerLayer
-                    frames={displayFrames}
-                    frameIndex={frameIndex}
-                    opacity={opacity}
-                    colorScheme={settings.colorScheme}
-                  />
-                )
+              globalRadarEnabled && displayFrames.length > 0 ? (
+                <GlobalRadarLayer
+                  frames={displayFrames}
+                  frameIndex={frameIndex}
+                  opacity={opacity}
+                  isCustomScale={isCustomScale}
+                  colorScheme={settings.colorScheme}
+                  rainViewerLut={rainViewerLUT}
+                  iemReflectivityLut={isCustomScale ? stationIemLUT : null}
+                />
               ) : null
             ) : null}
 
@@ -2425,7 +2378,7 @@ export default function RadarPage() {
           {!splitViewActive && (
           <div className="absolute bottom-28 sm:bottom-24 left-3 z-[500] text-gray-600 text-xs space-y-0.5 pointer-events-none">
             <div>
-              Radar: RainViewer
+              Radar: RainViewer + IEM US
               {mode === "station" && dataSource === "iem" && " · IEM/NEXRAD"}
               {mode === "station" && dataSource === "level3" && " · NOAA Level-III"}
               {mode === "station" && dataSource === "opera" && " · EUMETNET OPERA"}

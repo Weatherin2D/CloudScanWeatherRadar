@@ -1,21 +1,33 @@
-/** Default animated frame count for global and station radar. */
+/** Shared radar history window and frame-limit helpers. */
 export const DEFAULT_RADAR_FRAME_LIMIT = 13;
 
-/** RainViewer global radar cap (historical past frames). */
-export const MAX_GLOBAL_RADAR_FRAME_LIMIT = 13;
+export const RADAR_LOOKBACK_HOURS = 24;
 
-/** Per-station listing lookback window. */
-export const STATION_RADAR_LOOKBACK_HOURS = 24;
+/** RainViewer global mosaic cadence (minutes). */
+export const GLOBAL_RADAR_SCAN_INTERVAL_MINUTES = 10;
 
-/** Typical minutes between consecutive volume scans (NEXRAD / EU). */
+/** NEXRAD / IEM composite cadence (minutes). */
 export const STATION_RADAR_SCAN_INTERVAL_MINUTES = 5;
 
-/** Max station frames ≈ one scan every 5 min over 24 h. */
-export const MAX_STATION_RADAR_FRAME_LIMIT = Math.ceil(
-  (STATION_RADAR_LOOKBACK_HOURS * 60) / STATION_RADAR_SCAN_INTERVAL_MINUTES,
+/** @deprecated use RADAR_LOOKBACK_HOURS */
+export const STATION_RADAR_LOOKBACK_HOURS = RADAR_LOOKBACK_HOURS;
+
+export const MAX_GLOBAL_RADAR_FRAME_LIMIT = Math.ceil(
+  (RADAR_LOOKBACK_HOURS * 60) / STATION_RADAR_SCAN_INTERVAL_MINUTES,
 );
 
+export const MAX_STATION_RADAR_FRAME_LIMIT = MAX_GLOBAL_RADAR_FRAME_LIMIT;
+
 export const MIN_RADAR_FRAME_LIMIT = 1;
+
+function listingHoursForLimit(frameCount: number, maxFrames: number): number {
+  const frames = Math.min(maxFrames, Math.max(MIN_RADAR_FRAME_LIMIT, frameCount));
+  if (frames >= maxFrames) return RADAR_LOOKBACK_HOURS;
+  return Math.max(
+    STATION_RADAR_SCAN_INTERVAL_MINUTES / 60,
+    (frames * STATION_RADAR_SCAN_INTERVAL_MINUTES) / 60,
+  );
+}
 
 export function clampGlobalFrameLimit(
   limit: number,
@@ -51,14 +63,12 @@ export function sliceRecentFrames<T>(frames: T[], limit: number): T[] {
   return frames.slice(-clampStationFrameLimit(limit, frames.length));
 }
 
-/** Listing lookback in hours for a requested station frame count (up to 24 h). */
+export function globalListingHours(frameCount: number): number {
+  return listingHoursForLimit(frameCount, MAX_GLOBAL_RADAR_FRAME_LIMIT);
+}
+
 export function stationListingHours(frameCount: number): number {
-  const frames = clampStationFrameLimit(frameCount);
-  if (frames >= MAX_STATION_RADAR_FRAME_LIMIT) return STATION_RADAR_LOOKBACK_HOURS;
-  return Math.max(
-    STATION_RADAR_SCAN_INTERVAL_MINUTES / 60,
-    (frames * STATION_RADAR_SCAN_INTERVAL_MINUTES) / 60,
-  );
+  return listingHoursForLimit(frameCount, MAX_STATION_RADAR_FRAME_LIMIT);
 }
 
 /** IEM listing window in minutes. */

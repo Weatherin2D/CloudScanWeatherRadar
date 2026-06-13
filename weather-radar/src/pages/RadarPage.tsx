@@ -57,10 +57,12 @@ import RhiCurtainOverlay from "@/components/RhiCurtainOverlay";
 import RadarMapPane from "@/components/RadarMapPane";
 import { MAP_MAX_BOUNDS } from "@/lib/mapConfig";
 import {
-  clampFrameLimit,
+  clampGlobalFrameLimit,
+  clampStationFrameLimit,
   DEFAULT_RADAR_FRAME_LIMIT,
-  MAX_RADAR_FRAME_LIMIT,
-  sliceRecentFrames,
+  MAX_GLOBAL_RADAR_FRAME_LIMIT,
+  MAX_STATION_RADAR_FRAME_LIMIT,
+  sliceRecentGlobalFrames,
 } from "@/lib/radarFrameLimits";
 import SatelliteOverlayLayer from "@/components/SatelliteOverlayLayer";
 import PixelProbeTool from "@/components/PixelProbeTool";
@@ -211,7 +213,7 @@ function SettingsPanel({
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-sm text-gray-300">Global Frame Count</label>
                 <span className="text-xs text-blue-400 font-mono">
-                  {clampFrameLimit(globalFrameLimit, maxGlobalFrames)} / {maxGlobalFrames} frames
+                  {clampGlobalFrameLimit(globalFrameLimit, maxGlobalFrames)} / {maxGlobalFrames} frames
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -221,7 +223,7 @@ function SettingsPanel({
                   min={1}
                   max={maxGlobalFrames}
                   step={1}
-                  value={clampFrameLimit(globalFrameLimit, maxGlobalFrames)}
+                  value={clampGlobalFrameLimit(globalFrameLimit, maxGlobalFrames)}
                   onChange={e => onChange({ globalFrameLimit: Number(e.target.value) })}
                   className="flex-1 accent-blue-500 h-1.5"
                 />
@@ -233,7 +235,7 @@ function SettingsPanel({
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-sm text-gray-300">Station Frame Count</label>
                 <span className="text-xs text-blue-400 font-mono">
-                  {clampFrameLimit(stationFrameLimit)} / {MAX_RADAR_FRAME_LIMIT} frames
+                  {clampStationFrameLimit(stationFrameLimit)} / {MAX_STATION_RADAR_FRAME_LIMIT} frames
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -241,13 +243,13 @@ function SettingsPanel({
                 <input
                   type="range"
                   min={1}
-                  max={MAX_RADAR_FRAME_LIMIT}
+                  max={MAX_STATION_RADAR_FRAME_LIMIT}
                   step={1}
-                  value={clampFrameLimit(stationFrameLimit)}
+                  value={clampStationFrameLimit(stationFrameLimit)}
                   onChange={e => onChange({ stationFrameLimit: Number(e.target.value) })}
                   className="flex-1 accent-blue-500 h-1.5"
                 />
-                <span className="text-xs text-gray-500 w-7">{MAX_RADAR_FRAME_LIMIT}</span>
+                <span className="text-xs text-gray-500 w-7">{MAX_STATION_RADAR_FRAME_LIMIT}</span>
               </div>
             </div>
           </section>
@@ -1054,16 +1056,12 @@ export default function RadarPage() {
           time: f.time,
           path: f.path,
         }));
-        const nowcast: RainViewerFrame[] = (data.radar?.nowcast ?? []).slice(0, 3).map((f: { time: number; path: string }) => ({
-          time: f.time,
-          path: f.path,
-        }));
-        const all = [...past, ...nowcast];
+        const cappedPast = past.slice(-MAX_GLOBAL_RADAR_FRAME_LIMIT);
         setFrames(() => {
           if (initial) {
-            setFrameIndex(past.length > 0 ? past.length - 1 : 0);
+            setFrameIndex(cappedPast.length > 0 ? cappedPast.length - 1 : 0);
           }
-          return all;
+          return cappedPast;
         });
       } catch {
         // keep existing frames on refresh failure
@@ -1081,13 +1079,13 @@ export default function RadarPage() {
   }, []);
 
   const maxGlobalFrames = useMemo(
-    () => Math.max(1, Math.min(MAX_RADAR_FRAME_LIMIT, frames.length || MAX_RADAR_FRAME_LIMIT)),
+    () => Math.max(1, Math.min(MAX_GLOBAL_RADAR_FRAME_LIMIT, frames.length || MAX_GLOBAL_RADAR_FRAME_LIMIT)),
     [frames.length],
   );
 
   // Derive display frames from globalFrameLimit setting
   const displayFrames = useMemo(
-    () => sliceRecentFrames(frames, settings.globalFrameLimit),
+    () => sliceRecentGlobalFrames(frames, settings.globalFrameLimit),
     [frames, settings.globalFrameLimit],
   );
 

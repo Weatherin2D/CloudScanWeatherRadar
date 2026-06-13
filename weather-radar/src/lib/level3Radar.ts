@@ -46,7 +46,7 @@ export async function fetchLevel3Frames(
   const keys: string[] = [];
   let startAfter = recentLevel3StartAfter(prefix, level3ListingHours(maxFrames));
 
-  for (let page = 0; page < 2 && keys.length < maxFrames * 2; page++) {
+  for (let page = 0; page < 4 && keys.length < maxFrames * 2; page++) {
     const url =
       `${LEVEL3_S3_BASE}/?list-type=2&prefix=${encodeURIComponent(prefix)}` +
       `&max-keys=1000&start-after=${encodeURIComponent(startAfter)}`;

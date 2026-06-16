@@ -113,6 +113,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/open-meteo/, ""),
       },
+      "/api/stormforecast": {
+        target: "https://stormforecast.eu",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/stormforecast/, ""),
+      },
     },
   },
   preview: {

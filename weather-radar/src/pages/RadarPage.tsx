@@ -22,10 +22,13 @@ import { useOperaRadarFrames } from "@/hooks/useOperaRadarFrames";
 import { useLightning } from "@/hooks/useLightning";
 import { useWeatherRiskOutlook } from "@/hooks/useWeatherRiskOutlook";
 import { useWeatherAlerts } from "@/hooks/useWeatherAlerts";
+import { useEsslOutlookImage } from "@/hooks/useEsslOutlookImage";
 import WeatherRiskLayer from "@/components/WeatherRiskLayer";
 import WeatherAlertsLayer from "@/components/WeatherAlertsLayer";
+import EsslOutlookLayer from "@/components/EsslOutlookLayer";
 import { SPC_RISK_LEGEND, MESOCAST_RISK_LEGEND, type OutlookDay } from "@/lib/convectiveRisk";
 import { ALERT_SEVERITY_LEGEND, formatAlertExpiry, type WeatherAlertRecord } from "@/lib/weatherAlerts";
+import { ESSL_OUTLOOK_LABELS, type EsslOutlookType } from "@/lib/esslOutlook";
 import { severityColor } from "@/components/WeatherAlertsLayer";
 import { isIemProductSupported, isReflectivityProduct } from "@/lib/iemRadar";
 import {
@@ -148,6 +151,7 @@ interface AppSettings {
   lightningMaxAge: number;
   weatherRiskEnabled: boolean;
   weatherRiskDay: OutlookDay;
+  weatherRiskType: EsslOutlookType;
   weatherRiskOpacity: number;
   weatherAlertsEnabled: boolean;
   weatherAlertsOpacity: number;
@@ -165,7 +169,7 @@ function SettingsPanel({
     animSpeed, globalFrameLimit, stationFrameLimit, colorScheme, customStops = DEFAULT_CUSTOM_STOPS,
     reflectivityFadeStartDbz, reflectivityFadeEndDbz,
     lightningSize, lightningMaxAge,
-    weatherRiskEnabled, weatherRiskDay, weatherRiskOpacity,
+    weatherRiskEnabled, weatherRiskDay, weatherRiskType, weatherRiskOpacity,
     weatherAlertsEnabled, weatherAlertsOpacity,
     satelliteProduct,
   } = settings;
@@ -505,6 +509,25 @@ function SettingsPanel({
                   </p>
                 </div>
 
+                <div className="mb-4">
+                  <label className="text-sm text-gray-300 mb-2 block">ESSL outlook</label>
+                  <div className="space-y-2">
+                    {Object.entries(ESSL_OUTLOOK_LABELS).map(([key, label]) => (
+                      <button
+                        key={key}
+                        onClick={() => onChange({ weatherRiskType: key as EsslOutlookType })}
+                        className={`w-full text-left py-2 rounded-lg border text-sm font-medium transition-all ${
+                          weatherRiskType === key
+                            ? "border-blue-500 bg-blue-500/10 text-blue-200 ring-1 ring-blue-500/30"
+                            : "border-gray-700 text-gray-400 hover:border-gray-500 hover:bg-gray-800/50"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-sm text-gray-300">Overlay opacity</label>
@@ -830,6 +853,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   lightningMaxAge: 15,
   weatherRiskEnabled: false,
   weatherRiskDay: 1,
+  weatherRiskType: "paramcombi24",
   weatherRiskOpacity: 0.75,
   weatherAlertsEnabled: false,
   weatherAlertsOpacity: 0.7,
@@ -981,6 +1005,8 @@ export default function RadarPage() {
   const strikes = useLightning(lightningEnabled);
   const { outlook: weatherRiskOutlook, loading: weatherRiskLoading, error: weatherRiskError } =
     useWeatherRiskOutlook(settings.weatherRiskEnabled, settings.weatherRiskDay);
+  const { imageUrl: esslOutlookImageUrl, loading: esslOutlookLoading, error: esslOutlookError } =
+    useEsslOutlookImage(settings.weatherRiskEnabled, settings.weatherRiskType);
   const { data: weatherAlerts, loading: weatherAlertsLoading, error: weatherAlertsError } =
     useWeatherAlerts(settings.weatherAlertsEnabled || mode === "alerts");
 
@@ -2144,6 +2170,13 @@ export default function RadarPage() {
               />
             )}
 
+            {settings.weatherRiskEnabled && esslOutlookImageUrl && (
+              <EsslOutlookLayer
+                imageUrl={esslOutlookImageUrl}
+                opacity={settings.weatherRiskOpacity}
+              />
+            )}
+
             {settings.weatherAlertsEnabled && weatherAlerts && (
               <WeatherAlertsLayer
                 geojson={weatherAlerts.geojson}
@@ -2338,11 +2371,22 @@ export default function RadarPage() {
                     {weatherRiskError && (
                       <p className="mt-1.5 text-red-400/90">{weatherRiskError}</p>
                     )}
+                    {esslOutlookLoading && (
+                      <p className="mt-1.5 text-gray-500">Loading ESSL outlook…</p>
+                    )}
+                    {esslOutlookError && (
+                      <p className="mt-1.5 text-red-400/90">ESSL: {esslOutlookError}</p>
+                    )}
                     {!weatherRiskLoading && weatherRiskOutlook?.sources.length ? (
                       <p className="mt-1.5 text-gray-500">
                         {weatherRiskOutlook.sources.join(" · ")}
                       </p>
                     ) : null}
+                    {esslOutlookImageUrl && (
+                      <p className="mt-1.5 text-[10px] text-gray-500">
+                        ESSL overlay: {ESSL_OUTLOOK_LABELS[settings.weatherRiskType]}
+                      </p>
+                    )}
                     {!weatherRiskLoading && weatherRiskOutlook?.issueTime && (
                       <p className="mt-0.5 text-gray-500">
                         SPC issued {weatherRiskOutlook.issueTime}

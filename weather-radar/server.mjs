@@ -46,6 +46,11 @@ const apiProxies = [
     target: "https://api.open-meteo.com",
     rewrite: /^\/api\/open-meteo/,
   },
+  {
+    mount: "/api/stormforecast",
+    target: "https://stormforecast.eu",
+    rewrite: /^\/api\/stormforecast/,
+  },
 ];
 
 const app = express();

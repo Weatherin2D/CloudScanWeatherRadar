@@ -9,7 +9,7 @@ export const ESSL_OUTLOOK_LABELS: Record<EsslOutlookType, string> = {
 
 const STORMFORECAST_PROXY_BASE = "/api/stormforecast";
 const STORMFORECAST_ORIGIN = "https://stormforecast.eu";
-const CORS_PROXY = "https://api.allorigins.win/raw?url=";
+const CORS_PROXY = "https://corsproxy.io/?";
 
 // In dev/local: use Express proxy. In production (GitHub Pages): use CORS proxy.
 function getStormForecastBase(): string {
@@ -17,7 +17,7 @@ function getStormForecastBase(): string {
     return STORMFORECAST_PROXY_BASE;
   }
   // Production: use public CORS proxy to bypass CORS restrictions
-  return CORS_PROXY + encodeURIComponent(STORMFORECAST_ORIGIN);
+  return STORMFORECAST_ORIGIN;
 }
 
 const STORMFORECAST_BASE = getStormForecastBase();
@@ -31,12 +31,9 @@ function formatStormForecastUrl(rawUrl: string): string {
     return `${STORMFORECAST_PROXY_BASE}${url.pathname}${url.search}`;
   }
 
-  if (STORMFORECAST_BASE.includes("allorigins")) {
-    // For CORS proxy, encode the full target URL
-    return `${CORS_PROXY}${encodeURIComponent(url.toString())}`;
-  }
-
-  return url.toString();
+  // Always use CORS proxy for stormforecast.eu requests (both dev and prod)
+  // since the server has strict CORS policy
+  return `${CORS_PROXY}${encodeURIComponent(url.toString())}`;
 }
 
 export async function fetchEsslOutlookUrl(type: EsslOutlookType): Promise<string | null> {
@@ -78,7 +75,7 @@ async function fetchLatestDtg(): Promise<string | null> {
 }
 
 async function fetchMapTypes(dtg: string): Promise<EsslOutlookType[]> {
-  const url = buildStormForecastUrl(`/storm_query_2.php?q=getmaptypes&dtg=${dtg}`);
+  const url = formatStormForecastUrl(`/storm_query_2.php?q=getmaptypes&dtg=${dtg}`);
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`getmaptypes returned ${res.status}`);

@@ -9,7 +9,18 @@ export const ESSL_OUTLOOK_LABELS: Record<EsslOutlookType, string> = {
 
 const STORMFORECAST_PROXY_BASE = "/api/stormforecast";
 const STORMFORECAST_ORIGIN = "https://stormforecast.eu";
-const STORMFORECAST_BASE = proxiedApiBase(STORMFORECAST_PROXY_BASE, STORMFORECAST_ORIGIN);
+const CORS_PROXY = "https://api.allorigins.win/raw?url=";
+
+// In dev/local: use Express proxy. In production (GitHub Pages): use CORS proxy.
+function getStormForecastBase(): string {
+  if (import.meta.env.DEV) {
+    return STORMFORECAST_PROXY_BASE;
+  }
+  // Production: use public CORS proxy to bypass CORS restrictions
+  return CORS_PROXY + encodeURIComponent(STORMFORECAST_ORIGIN);
+}
+
+const STORMFORECAST_BASE = getStormForecastBase();
 
 function formatStormForecastUrl(rawUrl: string): string {
   const url = rawUrl.startsWith("http")
@@ -18,6 +29,11 @@ function formatStormForecastUrl(rawUrl: string): string {
 
   if (STORMFORECAST_BASE.startsWith("/api/")) {
     return `${STORMFORECAST_PROXY_BASE}${url.pathname}${url.search}`;
+  }
+
+  if (STORMFORECAST_BASE.includes("allorigins")) {
+    // For CORS proxy, encode the full target URL
+    return `${CORS_PROXY}${encodeURIComponent(url.toString())}`;
   }
 
   return url.toString();
@@ -51,7 +67,8 @@ export async function fetchEsslOutlookUrl(type: EsslOutlookType): Promise<string
 }
 
 async function fetchLatestDtg(): Promise<string | null> {
-  const res = await fetch(`${STORMFORECAST_BASE}/storm_query_2.php?q=getlast0012init`);
+  const url = formatStormForecastUrl("/storm_query_2.php?q=getlast0012init");
+  const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`getlast0012init returned ${res.status}`);
   }
@@ -61,7 +78,8 @@ async function fetchLatestDtg(): Promise<string | null> {
 }
 
 async function fetchMapTypes(dtg: string): Promise<EsslOutlookType[]> {
-  const res = await fetch(`${STORMFORECAST_BASE}/storm_query_2.php?q=getmaptypes&dtg=${dtg}`);
+  const url = buildStormForecastUrl(`/storm_query_2.php?q=getmaptypes&dtg=${dtg}`);
+  const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`getmaptypes returned ${res.status}`);
   }
@@ -81,9 +99,8 @@ interface MapTimeUrl {
 }
 
 async function fetchMapTimesAndUrls(dtg: string, type: EsslOutlookType): Promise<MapTimeUrl[] | null> {
-  const res = await fetch(
-    `${STORMFORECAST_BASE}/storm_query_2.php?q=getmaptimesandurls&dtg=${dtg}&maptype=${type}`,
-  );
+  const url = formatStormForecastUrl(`/storm_query_2.php?q=getmaptimesandurls&dtg=${dtg}&maptype=${type}`);
+  const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`getmaptimesandurls returned ${res.status}`);
   }

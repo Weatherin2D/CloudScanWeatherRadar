@@ -9,7 +9,7 @@ export const ESSL_OUTLOOK_LABELS: Record<EsslOutlookType, string> = {
 
 const STORMFORECAST_PROXY_BASE = "/api/stormforecast";
 const STORMFORECAST_ORIGIN = "https://stormforecast.eu";
-const CORS_PROXY = "https://corsproxy.io/?";
+const CORS_PROXY = "https://thingproxy.freeboard.io/fetch?url=";
 
 // In dev/local: use Express proxy. In production (GitHub Pages): use CORS proxy.
 function getStormForecastBase(): string {

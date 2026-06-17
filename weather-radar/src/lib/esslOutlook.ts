@@ -24,33 +24,53 @@ function formatStormForecastUrl(rawUrl: string): string {
 }
 
 export async function fetchEsslOutlookUrl(type: EsslOutlookType): Promise<string | null> {
-  const dtg = await fetchLatestDtg();
-  if (!dtg) return null;
+  try {
+    const dtg = await fetchLatestDtg();
+    if (!dtg) {
+      throw new Error("No latest DTG available");
+    }
 
-  const mapTypes = await fetchMapTypes(dtg);
-  if (!mapTypes.includes(type)) return null;
+    const mapTypes = await fetchMapTypes(dtg);
+    if (!mapTypes.includes(type)) {
+      throw new Error(`Map type ${type} not available`);
+    }
 
-  const urls = await fetchMapTimesAndUrls(dtg, type);
-  if (!urls?.length) return null;
+    const urls = await fetchMapTimesAndUrls(dtg, type);
+    if (!urls?.length) {
+      throw new Error(`No map times/URLs for ${type}`);
+    }
 
-  // Use the latest valid time for the selected outlook type.
-  return formatStormForecastUrl(urls[urls.length - 1].mapUrl);
+    // Use the latest valid time for the selected outlook type.
+    return formatStormForecastUrl(urls[urls.length - 1].mapUrl);
+  } catch (err) {
+    // Re-throw with more context, or return null if truly unavailable
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("ESSL outlook fetch failed:", msg);
+    throw err;
+  }
 }
 
 async function fetchLatestDtg(): Promise<string | null> {
   const res = await fetch(`${STORMFORECAST_BASE}/storm_query_2.php?q=getlast0012init`);
-  if (!res.ok) return null;
-  return res.text().then((text) => text.trim());
+  if (!res.ok) {
+    throw new Error(`getlast0012init returned ${res.status}`);
+  }
+  const text = await res.text();
+  const trimmed = text.trim();
+  return trimmed || null;
 }
 
 async function fetchMapTypes(dtg: string): Promise<EsslOutlookType[]> {
   const res = await fetch(`${STORMFORECAST_BASE}/storm_query_2.php?q=getmaptypes&dtg=${dtg}`);
-  if (!res.ok) return [];
+  if (!res.ok) {
+    throw new Error(`getmaptypes returned ${res.status}`);
+  }
   const text = await res.text();
   return text
     .trim()
     .split("\n")
     .map((line) => line.trim())
+    .filter((line) => line.length > 0)
     .filter((value): value is EsslOutlookType => value === "paramcombi24" || value === "paramcombi3");
 }
 
@@ -64,13 +84,21 @@ async function fetchMapTimesAndUrls(dtg: string, type: EsslOutlookType): Promise
   const res = await fetch(
     `${STORMFORECAST_BASE}/storm_query_2.php?q=getmaptimesandurls&dtg=${dtg}&maptype=${type}`,
   );
-  if (!res.ok) return null;
+  if (!res.ok) {
+    throw new Error(`getmaptimesandurls returned ${res.status}`);
+  }
   const text = await res.text();
-  return text
+  const lines = text
     .trim()
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0)
+    .filter((line) => line.length > 0);
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return lines
     .map((line) => {
       const [valid, mapUrl, verifUrl] = line.split(/\s+/);
       return { valid, mapUrl, verifUrl };

@@ -23,15 +23,25 @@ export function useEsslOutlookImage(enabled: boolean, type: EsslOutlookType) {
         if (cancelled) return;
         if (url) {
           setImageUrl(url);
+          setError(null);
         } else {
           setImageUrl(null);
-          setError("ESSL outlook unavailable");
+          setError("No outlook data available");
         }
       })
       .catch((err) => {
         if (cancelled) return;
         setImageUrl(null);
-        setError(err instanceof Error ? err.message : String(err));
+        let msg = "Unknown error";
+        if (err instanceof TypeError && err.message.includes("Failed to fetch")) {
+          msg = "Network error - check proxy";
+        } else if (err instanceof Error) {
+          msg = err.message;
+        } else {
+          msg = String(err);
+        }
+        console.error("ESSL outline error:", err);
+        setError(msg);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

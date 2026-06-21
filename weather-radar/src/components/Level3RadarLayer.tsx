@@ -33,7 +33,7 @@ export default function Level3RadarLayer({
         parsed.latitude,
         parsed.longitude,
         stops,
-        1536,
+        1280,
         reflectivity,
         reflectivityFade,
       );

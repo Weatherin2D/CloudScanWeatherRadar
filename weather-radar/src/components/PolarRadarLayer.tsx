@@ -45,7 +45,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
   useEffect(() => {
     if (!frames.length) return;
 
-    const queueFrame = (id: string) => {
+    const queueFrame = (id: string, priority: boolean = false) => {
       if (cacheRef.current.has(id) || loadingRef.current.has(id)) return;
       const frame = frames.find((f) => f.id === id);
       if (!frame) return;
@@ -53,8 +53,8 @@ export default function PolarRadarLayer<T extends PolarFrame>({
       loadFrame(frame)
         .then((result) => {
           if (result) {
-            // Limit cache to 5 frames to prevent memory issues with high-res renders
-            if (cacheRef.current.size >= 5) {
+            // Limit cache to 3 frames to reduce memory usage
+            if (cacheRef.current.size >= 3) {
               const oldestKey = cacheRef.current.keys().next().value;
               if (oldestKey && oldestKey !== activeId) {
                 cacheRef.current.delete(oldestKey);
@@ -75,14 +75,18 @@ export default function PolarRadarLayer<T extends PolarFrame>({
         });
     };
 
-    if (activeId) queueFrame(activeId);
+    // Load active frame immediately
+    if (activeId) queueFrame(activeId, true);
 
-    for (let d = -1; d <= 1; d++) {
-      if (d === 0) continue;
-      const i = (frameIndex + d + frames.length) % frames.length;
-      const f = frames[i];
-      if (f) queueFrame(f.id);
-    }
+    // Load adjacent frames with a small delay to prioritize active frame
+    setTimeout(() => {
+      for (let d = -1; d <= 1; d++) {
+        if (d === 0) continue;
+        const i = (frameIndex + d + frames.length) % frames.length;
+        const f = frames[i];
+        if (f) queueFrame(f.id, false);
+      }
+    }, 100);
   }, [frames, frameIndex, loadFrame, activeId]);
 
   useEffect(() => {

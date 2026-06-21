@@ -53,6 +53,18 @@ export default function PolarRadarLayer<T extends PolarFrame>({
       loadFrame(frame)
         .then((result) => {
           if (result) {
+            // Limit cache to 5 frames to prevent memory issues with high-res renders
+            if (cacheRef.current.size >= 5) {
+              const oldestKey = cacheRef.current.keys().next().value;
+              if (oldestKey && oldestKey !== activeId) {
+                cacheRef.current.delete(oldestKey);
+                const overlay = overlaysRef.current.get(oldestKey);
+                if (overlay) {
+                  overlay.remove();
+                  overlaysRef.current.delete(oldestKey);
+                }
+              }
+            }
             cacheRef.current.set(id, result);
             bumpCache((n) => n + 1);
           }

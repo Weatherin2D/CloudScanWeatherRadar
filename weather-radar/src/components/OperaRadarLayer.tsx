@@ -29,7 +29,7 @@ export default function OperaRadarLayer({
       try {
         const scan = await loadOdimScan(frame.odimUrl, station.lat, station.lon);
         if (!scan) return null;
-        return renderOdimGeographic(scan, stops, 1024, reflectivity, reflectivityFade);
+        return renderOdimGeographic(scan, stops, 1200, reflectivity, reflectivityFade);
       } catch {
         return null;
       }

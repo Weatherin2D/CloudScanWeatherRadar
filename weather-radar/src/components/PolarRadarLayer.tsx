@@ -44,63 +44,52 @@ export default function PolarRadarLayer<T extends PolarFrame>({
 
   useEffect(() => {
     if (!frames.length) return;
+    let cancelled = false;
 
-    const queueFrame = (id: string) => {
+    const queueFrame = async (id: string) => {
       if (cacheRef.current.has(id) || loadingRef.current.has(id)) return;
       const frame = frames.find((f) => f.id === id);
       if (!frame) return;
+      
       loadingRef.current.add(id);
-      loadFrame(frame)
-        .then((result) => {
-          if (result) {
-            // Keep only 2 frames in cache: current and one other
-            if (cacheRef.current.size >= 2) {
-              // Find oldest non-active frame
-              for (const [key, _] of cacheRef.current) {
-                if (key !== activeId && key !== id) {
-                  cacheRef.current.delete(key);
-                  const overlay = overlaysRef.current.get(key);
-                  if (overlay) {
-                    overlay.remove();
-                    overlaysRef.current.delete(key);
-                  }
-                  break;
-                }
+      
+      try {
+        const result = await loadFrame(frame);
+        if (cancelled || !result) return;
+        
+        // Keep ONLY 1 frame in cache at a time to minimize memory
+        if (cacheRef.current.size >= 1) {
+          // Clear all non-active frames
+          for (const [key, _] of cacheRef.current) {
+            if (key !== id) {
+              cacheRef.current.delete(key);
+              const overlay = overlaysRef.current.get(key);
+              if (overlay) {
+                overlay.remove();
+                overlaysRef.current.delete(key);
               }
             }
-            cacheRef.current.set(id, result);
-            bumpCache((n) => n + 1);
           }
-        })
-        .catch(() => {})
-        .finally(() => {
-          loadingRef.current.delete(id);
-        });
+        }
+        
+        cacheRef.current.set(id, result);
+        bumpCache((n) => n + 1);
+      } catch {
+        // Ignore errors
+      } finally {
+        loadingRef.current.delete(id);
+      }
     };
 
-    // Load only active frame immediately
+    // Load only active frame, no preloading
     if (activeId) {
       queueFrame(activeId);
     }
 
-    // Preload next frame when browser is idle
-    const preloadNext = () => {
-      const next = frames[(frameIndex + 1) % frames.length];
-      if (next && next.id !== activeId) {
-        queueFrame(next.id);
-      }
+    return () => {
+      cancelled = true;
     };
-
-    const timeoutId = setTimeout(() => {
-      if ('requestIdleCallback' in window) {
-        requestIdleCallback(preloadNext, { timeout: 2000 });
-      } else {
-        preloadNext();
-      }
-    }, 300);
-
-    return () => clearTimeout(timeoutId);
-  }, [frames, frameIndex, loadFrame, activeId]);
+  }, [frames, loadFrame, activeId]);
 
   useEffect(() => {
     overlaysRef.current.forEach((ov, id) => {

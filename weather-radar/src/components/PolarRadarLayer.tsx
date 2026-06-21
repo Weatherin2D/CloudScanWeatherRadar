@@ -75,18 +75,18 @@ export default function PolarRadarLayer<T extends PolarFrame>({
         });
     };
 
-    // Load active frame immediately
-    if (activeId) queueFrame(activeId, true);
+    // Load only active frame immediately
+    if (activeId) {
+      queueFrame(activeId, true);
+    }
 
-    // Load adjacent frames with a small delay to prioritize active frame
-    setTimeout(() => {
-      for (let d = -1; d <= 1; d++) {
-        if (d === 0) continue;
-        const i = (frameIndex + d + frames.length) % frames.length;
-        const f = frames[i];
-        if (f) queueFrame(f.id, false);
-      }
-    }, 100);
+    // Load adjacent frames only after a longer delay to reduce initial load
+    const timeoutId = setTimeout(() => {
+      const next = frames[(frameIndex + 1) % frames.length];
+      if (next) queueFrame(next.id, false);
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
   }, [frames, frameIndex, loadFrame, activeId]);
 
   useEffect(() => {

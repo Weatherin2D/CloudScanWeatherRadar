@@ -23,7 +23,7 @@ export const RAINVIEWER_TILE_OPTS: TileLayerOptions = {
 
 export const IEM_RIDGE_TILE_OPTS: TileLayerOptions = {
   ...SMOOTH_RADAR_TILE_OPTS,
-  maxNativeZoom: 12,
+  maxNativeZoom: 13,
   maxZoom: 18,
   className: "radar-tile-raw",
   attribution: "IEM/NEXRAD",

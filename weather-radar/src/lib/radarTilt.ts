@@ -79,12 +79,8 @@ export function resolveStationDataSource(
 
   if (!productSupportsTilt(product)) return baseSource;
 
-  // Lowest tilt: IEM serves georeferenced TMS tiles (avoids stretched polar overlays).
-  if (tiltIndex === 0 && baseSource === "iem" && isIemProductSupported(productId)) {
-    return "iem";
-  }
-
-  if (baseSource === "level3" || tiltIndex > 0) return "level3";
+  // Use native Level 3 data for all tilts to get maximum quality
+  if (baseSource === "level3" || baseSource === "iem") return "level3";
 
   return baseSource;
 }

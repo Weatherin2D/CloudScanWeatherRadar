@@ -28,13 +28,13 @@ export default function Level3RadarLayer({
       if (!res.ok) return null;
       const parsed = await parseLevel3(await res.arrayBuffer());
       if (!parsed) return null;
-      // Use 1200px for better balance between quality and performance
+      // Reduce to 800px for smooth performance on higher tilts
       return renderLevel3Geographic(
         parsed.layer,
         parsed.latitude,
         parsed.longitude,
         stops,
-        1200,
+        800,
         reflectivity,
         reflectivityFade,
       );

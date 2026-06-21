@@ -34,8 +34,8 @@ export default function StandardRainViewerLayer({
   useEffect(() => {
     preloadPaths.forEach((path) => {
       if (poolRef.current.has(path)) return;
-      const url = `https://tilecache.rainviewer.com${path}/256/{z}/{x}/{y}/${colorScheme}/0_0.png`;
-      const layer = L.tileLayer(url, { ...RAINVIEWER_TILE_OPTS, opacity: 0, zIndex: 5 });
+      const url = `https://tilecache.rainviewer.com${path}/512/{z}/{x}/{y}/${colorScheme}/0_0.png`;
+      const layer = L.tileLayer(url, { ...RAINVIEWER_TILE_OPTS, opacity: 0, zIndex: 5, tileSize: 512 });
       layer.addTo(map);
       poolRef.current.set(path, layer);
     });

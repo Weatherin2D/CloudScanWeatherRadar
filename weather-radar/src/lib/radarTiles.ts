@@ -1,6 +1,7 @@
 import type { TileLayerOptions } from "leaflet";
 
-/** RainViewer only serves native tiles through zoom 7; higher levels are upscaled client-side. */
+/** RainViewer only serves native tiles through zoom 7; higher levels are upscaled client-side. 
+ * Updated to use 512px tiles for improved resolution. */
 export const RAINVIEWER_MAX_NATIVE_ZOOM = 7;
 
 /** Shared Leaflet options for smooth radar overlays (avoid reload flicker on pan/zoom). */

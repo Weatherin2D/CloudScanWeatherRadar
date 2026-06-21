@@ -89,8 +89,8 @@ export default function GlobalRadarLayer({
     neededRv.forEach((path, key) => {
       if (rvPoolRef.current.has(key)) return;
       const url = isCustomScale
-        ? `https://tilecache.rainviewer.com${path}/256/{z}/{x}/{y}/255/0_0.png`
-        : `https://tilecache.rainviewer.com${path}/256/{z}/{x}/{y}/${colorScheme}/0_0.png`;
+        ? `https://tilecache.rainviewer.com${path}/512/{z}/{x}/{y}/255/0_0.png`
+        : `https://tilecache.rainviewer.com${path}/512/{z}/{x}/{y}/${colorScheme}/0_0.png`;
       const layer = isCustomScale
         ? new CanvasTileLayerClass(url, {
             ...RAINVIEWER_TILE_OPTS,
@@ -99,8 +99,9 @@ export default function GlobalRadarLayer({
             lut: rvLutRef.current,
             colorMode: "channel",
             attribution: "",
+            tileSize: 512,
           })
-        : L.tileLayer(url, { ...RAINVIEWER_TILE_OPTS, opacity: 0, zIndex: 6 });
+        : L.tileLayer(url, { ...RAINVIEWER_TILE_OPTS, opacity: 0, zIndex: 6, tileSize: 512 });
       layer.addTo(map);
       rvPoolRef.current.set(key, layer);
     });

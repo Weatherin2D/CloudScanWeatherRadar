@@ -22,9 +22,12 @@ function sampleIntensity(
 
 export const CanvasTileLayerClass = L.TileLayer.extend({
   createTile(coords: L.Coords, done: L.DoneCallback) {
+    const opts = (this as CanvasTileLayer).options;
+    const tileSize = opts.tileSize || 256;
+    
     const canvas = document.createElement("canvas");
-    canvas.width = 256;
-    canvas.height = 256;
+    canvas.width = tileSize;
+    canvas.height = tileSize;
 
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -38,11 +41,10 @@ export const CanvasTileLayerClass = L.TileLayer.extend({
 
       ctx.drawImage(img, 0, 0);
 
-      const opts = (this as CanvasTileLayer).options;
       const lut = opts.lut;
       if (lut) {
         try {
-          const imageData = ctx.getImageData(0, 0, 256, 256);
+          const imageData = ctx.getImageData(0, 0, tileSize, tileSize);
           const d = imageData.data;
           const mode = opts.colorMode ?? "channel";
           for (let i = 0; i < d.length; i += 4) {

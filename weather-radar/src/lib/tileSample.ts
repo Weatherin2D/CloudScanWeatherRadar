@@ -5,7 +5,7 @@ import { getRadarProduct } from "@/lib/radarProducts";
 
 const tileCanvasCache = new Map<string, HTMLCanvasElement>();
 
-async function loadTile(url: string): Promise<HTMLCanvasElement | null> {
+async function loadTile(url: string, tileSize = 256): Promise<HTMLCanvasElement | null> {
   const cached = tileCanvasCache.get(url);
   if (cached) return cached;
 
@@ -14,8 +14,8 @@ async function loadTile(url: string): Promise<HTMLCanvasElement | null> {
     img.crossOrigin = "anonymous";
     img.onload = () => {
       const canvas = document.createElement("canvas");
-      canvas.width = 256;
-      canvas.height = 256;
+      canvas.width = tileSize;
+      canvas.height = tileSize;
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       if (!ctx) {
         resolve(null);
@@ -34,15 +34,15 @@ async function loadTile(url: string): Promise<HTMLCanvasElement | null> {
   });
 }
 
-function pixelInTile(lat: number, lon: number, zoom: number, x: number, y: number) {
+function pixelInTile(lat: number, lon: number, zoom: number, x: number, y: number, tileSize = 256) {
   const n = 2 ** zoom;
-  const globalX = ((lon + 180) / 360) * n * 256;
+  const globalX = ((lon + 180) / 360) * n * tileSize;
   const latRad = (lat * Math.PI) / 180;
   const globalY =
-    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n * 256;
+    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n * tileSize;
   return {
-    px: Math.floor(globalX - x * 256),
-    py: Math.floor(globalY - y * 256),
+    px: Math.floor(globalX - x * tileSize),
+    py: Math.floor(globalY - y * tileSize),
   };
 }
 
@@ -52,13 +52,14 @@ async function samplePixel(
   zoom: number,
   tileUrl: (z: number, x: number, y: number) => string,
   decode: (r: number, g: number, b: number, a: number) => number | null,
+  tileSize = 256,
 ): Promise<number | null> {
   const { x, y } = latLonToTile(lat, lon, zoom);
-  const canvas = await loadTile(tileUrl(zoom, x, y));
+  const canvas = await loadTile(tileUrl(zoom, x, y), tileSize);
   if (!canvas) return null;
 
-  const { px, py } = pixelInTile(lat, lon, zoom, x, y);
-  if (px < 0 || py < 0 || px >= 256 || py >= 256) return null;
+  const { px, py } = pixelInTile(lat, lon, zoom, x, y, tileSize);
+  if (px < 0 || py < 0 || px >= tileSize || py >= tileSize) return null;
 
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return null;
@@ -87,12 +88,13 @@ export async function sampleRainViewerDbz(
     lat,
     lon,
     zoom,
-    (z, x, y) => `https://tilecache.rainviewer.com${framePath}/256/${z}/${x}/${y}/255/0_0.png`,
+    (z, x, y) => `https://tilecache.rainviewer.com${framePath}/512/${z}/${x}/${y}/255/0_0.png`,
     (r, _g, _b, a) => {
       if (a < 10) return null;
       const dbz = rainViewerByteToDbz(r);
       return dbz <= -32 ? null : dbz;
     },
+    512,
   );
 }
 

@@ -45,7 +45,7 @@ export default function CanvasRainViewerLayer({ frames, frameIndex, opacity, lut
     preloadPaths.forEach((path) => {
       if (poolRef.current.has(path)) return;
       // Scheme 255 = raw dBZ in red channel (R&127)-32
-      const url = `https://tilecache.rainviewer.com${path}/256/{z}/{x}/{y}/255/0_0.png`;
+      const url = `https://tilecache.rainviewer.com${path}/512/{z}/{x}/{y}/255/0_0.png`;
       const layer = new CanvasTileLayerClass(url, {
         ...RAINVIEWER_TILE_OPTS,
         opacity: 0,
@@ -53,6 +53,7 @@ export default function CanvasRainViewerLayer({ frames, frameIndex, opacity, lut
         lut: lutRef.current,
         colorMode: "channel",
         attribution: "",
+        tileSize: 512,
       });
       layer.addTo(map);
       poolRef.current.set(path, layer);

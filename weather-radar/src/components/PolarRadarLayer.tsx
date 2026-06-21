@@ -45,7 +45,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
   useEffect(() => {
     if (!frames.length) return;
 
-    const queueFrame = (id: string, priority: boolean = false) => {
+    const queueFrame = (id: string) => {
       if (cacheRef.current.has(id) || loadingRef.current.has(id)) return;
       const frame = frames.find((f) => f.id === id);
       if (!frame) return;
@@ -53,15 +53,18 @@ export default function PolarRadarLayer<T extends PolarFrame>({
       loadFrame(frame)
         .then((result) => {
           if (result) {
-            // Limit cache to 3 frames to reduce memory usage
-            if (cacheRef.current.size >= 3) {
-              const oldestKey = cacheRef.current.keys().next().value;
-              if (oldestKey && oldestKey !== activeId) {
-                cacheRef.current.delete(oldestKey);
-                const overlay = overlaysRef.current.get(oldestKey);
-                if (overlay) {
-                  overlay.remove();
-                  overlaysRef.current.delete(oldestKey);
+            // Keep only 2 frames in cache: current and one other
+            if (cacheRef.current.size >= 2) {
+              // Find oldest non-active frame
+              for (const [key, _] of cacheRef.current) {
+                if (key !== activeId && key !== id) {
+                  cacheRef.current.delete(key);
+                  const overlay = overlaysRef.current.get(key);
+                  if (overlay) {
+                    overlay.remove();
+                    overlaysRef.current.delete(key);
+                  }
+                  break;
                 }
               }
             }
@@ -77,14 +80,24 @@ export default function PolarRadarLayer<T extends PolarFrame>({
 
     // Load only active frame immediately
     if (activeId) {
-      queueFrame(activeId, true);
+      queueFrame(activeId);
     }
 
-    // Load adjacent frames only after a longer delay to reduce initial load
-    const timeoutId = setTimeout(() => {
+    // Preload next frame when browser is idle
+    const preloadNext = () => {
       const next = frames[(frameIndex + 1) % frames.length];
-      if (next) queueFrame(next.id, false);
-    }, 500);
+      if (next && next.id !== activeId) {
+        queueFrame(next.id);
+      }
+    };
+
+    const timeoutId = setTimeout(() => {
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(preloadNext, { timeout: 2000 });
+      } else {
+        preloadNext();
+      }
+    }, 300);
 
     return () => clearTimeout(timeoutId);
   }, [frames, frameIndex, loadFrame, activeId]);

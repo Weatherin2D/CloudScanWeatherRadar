@@ -79,13 +79,8 @@ export function resolveStationDataSource(
 
   if (!productSupportsTilt(product)) return baseSource;
 
-  // Use IEM tiles for lowest tilt (instant loading, georeferenced)
-  // Use Level 3 for higher tilts (allows tilt selection)
-  if (tiltIndex === 0 && baseSource === "iem" && isIemProductSupported(productId)) {
-    return "iem";
-  }
-
-  if (baseSource === "level3" || tiltIndex > 0) return "level3";
+  // Use native Level 3 data for all tilts for maximum quality (like RadarScope/WeatherWise)
+  if (baseSource === "level3" || baseSource === "iem") return "level3";
 
   return baseSource;
 }

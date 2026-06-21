@@ -53,7 +53,6 @@ export default function CanvasRainViewerLayer({ frames, frameIndex, opacity, lut
         lut: lutRef.current,
         colorMode: "channel",
         attribution: "",
-        tileSize: 512,
       });
       layer.addTo(map);
       poolRef.current.set(path, layer);

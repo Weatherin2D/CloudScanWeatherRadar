@@ -99,9 +99,8 @@ export default function GlobalRadarLayer({
             lut: rvLutRef.current,
             colorMode: "channel",
             attribution: "",
-            tileSize: 512,
           })
-        : L.tileLayer(url, { ...RAINVIEWER_TILE_OPTS, opacity: 0, zIndex: 6, tileSize: 512 });
+        : L.tileLayer(url, { ...RAINVIEWER_TILE_OPTS, opacity: 0, zIndex: 6 });
       layer.addTo(map);
       rvPoolRef.current.set(key, layer);
     });

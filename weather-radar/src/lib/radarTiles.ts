@@ -17,6 +17,8 @@ export const RAINVIEWER_TILE_OPTS: TileLayerOptions = {
   maxNativeZoom: RAINVIEWER_MAX_NATIVE_ZOOM,
   maxZoom: 18,
   className: "radar-tile-raw",
+  tileSize: 512,
+  zoomOffset: -1,
 };
 
 export const IEM_RIDGE_TILE_OPTS: TileLayerOptions = {

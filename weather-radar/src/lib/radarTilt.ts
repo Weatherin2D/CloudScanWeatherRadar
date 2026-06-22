@@ -79,13 +79,8 @@ export function resolveStationDataSource(
 
   if (!productSupportsTilt(product)) return baseSource;
 
-  // Use IEM tiles for lowest tilt (instant, no lag)
-  // Use Level 3 only for higher tilts when explicitly selected
-  if (tiltIndex === 0 && baseSource === "iem" && isIemProductSupported(productId)) {
-    return "iem";
-  }
-
-  if (baseSource === "level3" || tiltIndex > 0) return "level3";
+  // Use Level 3 for all tilts - Web Worker prevents UI blocking
+  if (baseSource === "level3" || baseSource === "iem") return "level3";
 
   return baseSource;
 }

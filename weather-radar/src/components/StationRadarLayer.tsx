@@ -18,6 +18,7 @@ const LATEST_SCAN_FRAME: StationRadarFrame = { time: 0, tmsId: "0" };
 interface Props {
   station: RadarStation | null;
   product: string;
+  tilt?: number;
   frames: StationRadarFrame[];
   framesLoading?: boolean;
   frameIndex: number;
@@ -28,6 +29,7 @@ interface Props {
 export default function StationRadarLayer({
   station,
   product,
+  tilt = 0,
   frames,
   framesLoading = false,
   frameIndex,
@@ -39,8 +41,21 @@ export default function StationRadarLayer({
   const lutRef = useRef(reflectivityLut);
   const layerConfigRef = useRef("");
 
+  // Convert product + tilt to IEM product code (N0B -> N1B, N2B, N3B for higher tilts)
+  const iemProduct = useMemo(() => {
+    const baseProd = product.toUpperCase();
+    if (baseProd === "N0Q") {
+      // N0Q maps to N0B, N1B, N2B, N3B
+      return tilt === 0 ? "N0B" : `N${tilt}B`;
+    }
+    if (baseProd === "N0B" && tilt > 0) {
+      return `N${tilt}B`;
+    }
+    return product;
+  }, [product, tilt]);
+
   const useCustomReflectivity =
-    isReflectivityProduct(product) && reflectivityLut != null;
+    isReflectivityProduct(iemProduct) && reflectivityLut != null;
 
   const displayFrames = useMemo(() => {
     if (frames.length > 0) return frames;
@@ -79,14 +94,14 @@ export default function StationRadarLayer({
   }, [reflectivityLut, useCustomReflectivity]);
 
   useEffect(() => {
-    if (!station?.id || station.country !== "us" || !isIemProductSupported(product)) {
+    if (!station?.id || station.country !== "us" || !isIemProductSupported(iemProduct)) {
       poolRef.current.forEach((layer) => layer.remove());
       poolRef.current.clear();
       layerConfigRef.current = "";
       return;
     }
 
-    const layerConfig = `${station.id}:${product}:${useCustomReflectivity}`;
+    const layerConfig = `${station.id}:${iemProduct}:${useCustomReflectivity}`;
     if (layerConfigRef.current !== layerConfig) {
       poolRef.current.forEach((layer) => layer.remove());
       poolRef.current.clear();
@@ -95,7 +110,7 @@ export default function StationRadarLayer({
 
     preloadIds.forEach((tmsId) => {
       if (poolRef.current.has(tmsId)) return;
-      const url = iemRidgeTileUrl(station.id, product, tmsId);
+      const url = iemRidgeTileUrl(station.id, iemProduct, tmsId);
 
       const layer = useCustomReflectivity
         ? new CanvasTileLayerClass(url, {
@@ -129,7 +144,7 @@ export default function StationRadarLayer({
     });
   }, [
     station,
-    product,
+    iemProduct,
     preloadIds,
     activeTmsId,
     opacity,

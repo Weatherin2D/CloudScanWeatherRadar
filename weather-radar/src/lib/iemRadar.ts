@@ -75,12 +75,15 @@ export function latLonToTile(lat: number, lon: number, zoom: number) {
   return { x, y };
 }
 
-/** Level III products served by IEM RIDGE (N0C is not available). */
+/** Level III products served by IEM RIDGE. */
 export const IEM_RIDGE_PRODUCTS = new Set([
-  "N0B",
-  "N0S",
-  "N0Z",
-  "NET",
+  "N0B", // Base reflectivity tilt 1 (0.5°)
+  "N1B", // Base reflectivity tilt 2 (1.5°)
+  "N2B", // Base reflectivity tilt 3 (2.4°)
+  "N3B", // Base reflectivity tilt 4 (3.4°)
+  "N0S", // Storm relative velocity
+  "N0Z", // Base reflectivity (legacy)
+  "NET", // Echo tops
 ]);
 
 export function isIemProductSupported(productId: string): boolean {

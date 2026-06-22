@@ -200,6 +200,7 @@ export default function RadarMapPane({
             <StationRadarLayer
               station={station}
               product={product.id}
+              tilt={tiltIndex}
               frames={stationFrames}
               framesLoading={stationFramesLoading}
               frameIndex={frameIndex}

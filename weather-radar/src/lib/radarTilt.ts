@@ -79,14 +79,20 @@ export function resolveStationDataSource(
 
   if (!productSupportsTilt(product)) return baseSource;
 
-  // Use IEM tiles for base tilt - instant, reliable, no rendering needed
-  // This is what most web-based radar apps use for reliability
-  if (tiltIndex === 0 && baseSource === "iem" && isIemProductSupported(productId)) {
+  // Use IEM tiles for ALL tilts - instant, reliable, high quality
+  // IEM serves N0B, N1B, N2B, N3B for all 4 tilt angles
+  if (baseSource === "iem" && isIemProductSupported(productId)) {
+    // Convert tilt index to IEM product code
+    const baseProd = iemProductId(productId);
+    if (baseProd === "N0B" && tiltIndex > 0 && tiltIndex <= 3) {
+      // IEM has N1B, N2B, N3B for higher tilts
+      return "iem";
+    }
     return "iem";
   }
 
-  // Use Level 3 for higher tilts only when explicitly requested
-  if (baseSource === "level3" || tiltIndex > 0) return "level3";
+  // Fallback to Level 3 if IEM doesn't support the product
+  if (baseSource === "level3") return "level3";
 
   return baseSource;
 }

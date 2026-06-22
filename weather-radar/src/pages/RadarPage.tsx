@@ -2117,6 +2117,7 @@ export default function RadarPage() {
                   <StationRadarLayer
                     station={selectedStation}
                     product={selectedProduct.id}
+                    tilt={selectedTilt}
                     frames={stationFrames}
                     framesLoading={stationFramesLoading}
                     frameIndex={frameIndex}

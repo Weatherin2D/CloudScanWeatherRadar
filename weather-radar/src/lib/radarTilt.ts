@@ -79,8 +79,14 @@ export function resolveStationDataSource(
 
   if (!productSupportsTilt(product)) return baseSource;
 
-  // Use Level 3 for all tilts - Web Worker prevents UI blocking
-  if (baseSource === "level3" || baseSource === "iem") return "level3";
+  // Use IEM tiles for base tilt - instant, reliable, no rendering needed
+  // This is what most web-based radar apps use for reliability
+  if (tiltIndex === 0 && baseSource === "iem" && isIemProductSupported(productId)) {
+    return "iem";
+  }
+
+  // Use Level 3 for higher tilts only when explicitly requested
+  if (baseSource === "level3" || tiltIndex > 0) return "level3";
 
   return baseSource;
 }

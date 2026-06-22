@@ -36,7 +36,22 @@ export default function Level3RadarLayer({
           { type: "module" }
         );
 
+        const timeout = setTimeout(() => {
+          worker.terminate();
+          console.error("Worker timeout");
+          resolve(null);
+        }, 30000); // 30 second timeout
+
         worker.onmessage = (e: MessageEvent) => {
+          clearTimeout(timeout);
+          
+          if (e.data.error) {
+            console.error("Worker error:", e.data.error);
+            worker.terminate();
+            resolve(null);
+            return;
+          }
+
           const { imageData, bounds } = e.data;
           
           // Convert ImageData to data URL on main thread (fast operation)
@@ -57,7 +72,9 @@ export default function Level3RadarLayer({
           worker.terminate();
         };
 
-        worker.onerror = () => {
+        worker.onerror = (error) => {
+          clearTimeout(timeout);
+          console.error("Worker error:", error);
           resolve(null);
           worker.terminate();
         };

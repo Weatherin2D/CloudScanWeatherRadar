@@ -3,14 +3,6 @@
  * This prevents UI blocking and allows smooth, responsive rendering.
  */
 
-import type { ColorStop, ReflectivityFadeSettings } from "@/lib/palPalette";
-import {
-  colorAtReflectivityDbz,
-  DEFAULT_REFLECTIVITY_FADE,
-} from "@/lib/palPalette";
-import type { Level3RadialLayer } from "@/lib/level3Parse";
-import { sampleLevel3RadialInterp } from "@/lib/polarSample";
-
 const DEG = Math.PI / 180;
 
 function destination(lat: number, lon: number, bearingDeg: number, distKm: number) {
@@ -30,11 +22,63 @@ function destination(lat: number, lon: number, bearingDeg: number, distKm: numbe
   return { lat: lat2 / DEG, lon: lon2 / DEG };
 }
 
-function level3GateBounds(
-  layer: Level3RadialLayer,
-  lat: number,
-  lon: number,
-): [[number, number], [number, number]] {
+function sampleLevel3RadialInterp(layer: any, siteLat: number, siteLon: number, gateLat: number, gateLon: number): number | null {
+  const dlat = gateLat - siteLat;
+  const dlon = gateLon - siteLon;
+  const bearing = (Math.atan2(dlon, dlat) / DEG + 360) % 360;
+  const R = 6371;
+  const phi1 = siteLat * DEG;
+  const phi2 = gateLat * DEG;
+  const dphi = (gateLat - siteLat) * DEG;
+  const dlam = (gateLon - siteLon) * DEG;
+  const a = Math.sin(dphi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dlam / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const rangeKm = R * c;
+  const binIndex = (rangeKm - layer.firstBin) / layer.rangeScale;
+
+  if (binIndex < 0 || binIndex >= layer.numberBins) return null;
+
+  let closestRadial = null;
+  let minAngleDiff = Infinity;
+
+  for (const radial of layer.radials) {
+    let angleDiff = Math.abs(radial.startAngle - bearing);
+    if (angleDiff > 180) angleDiff = 360 - angleDiff;
+    if (angleDiff < minAngleDiff) {
+      minAngleDiff = angleDiff;
+      closestRadial = radial;
+    }
+  }
+
+  if (!closestRadial) return null;
+
+  const bi = Math.floor(binIndex);
+  if (bi < 0 || bi >= closestRadial.bins.length) return null;
+
+  return closestRadial.bins[bi] ?? null;
+}
+
+function colorAtReflectivityDbz(dbz: number, stops: any[], fade: any): [number, number, number, number] {
+  if (dbz < fade.min) return [0, 0, 0, 0];
+  if (dbz < fade.fadeStart) {
+    const t = (dbz - fade.min) / (fade.fadeStart - fade.min);
+    const alpha = Math.floor(t * 255);
+    for (let i = stops.length - 1; i >= 0; i--) {
+      if (dbz >= stops[i].dbz) {
+        return [stops[i].r, stops[i].g, stops[i].b, alpha];
+      }
+    }
+  }
+
+  for (let i = stops.length - 1; i >= 0; i--) {
+    if (dbz >= stops[i].dbz) {
+      return [stops[i].r, stops[i].g, stops[i].b, 255];
+    }
+  }
+  return [0, 0, 0, 0];
+}
+
+function level3GateBounds(layer: any, lat: number, lon: number): [[number, number], [number, number]] {
   let minLat = lat;
   let maxLat = lat;
   let minLon = lon;
@@ -59,65 +103,52 @@ function level3GateBounds(
   ];
 }
 
-interface RenderRequest {
-  layer: Level3RadialLayer;
-  lat: number;
-  lon: number;
-  stops: ColorStop[];
-  maxSize: number;
-  reflectivity: boolean;
-  fade: ReflectivityFadeSettings;
-}
+self.onmessage = (e: MessageEvent) => {
+  try {
+    const { layer, lat, lon, stops, maxSize, reflectivity, fade } = e.data;
 
-interface RenderResponse {
-  imageData: ImageData;
-  bounds: [[number, number], [number, number]];
-}
-
-self.onmessage = (e: MessageEvent<RenderRequest>) => {
-  const { layer, lat, lon, stops, maxSize, reflectivity, fade } = e.data;
-
-  const sampleColor = reflectivity
-    ? (value: number, s: ColorStop[]) => colorAtReflectivityDbz(value, s, fade)
-    : (value: number, s: ColorStop[]) => {
-        // Simple fallback
-        for (let i = s.length - 1; i >= 0; i--) {
-          if (value >= s[i].dbz) {
-            return [s[i].r, s[i].g, s[i].b, 255] as [number, number, number, number];
+    const sampleColor = reflectivity
+      ? (value: number, s: any[]) => colorAtReflectivityDbz(value, s, fade)
+      : (value: number, s: any[]) => {
+          for (let i = s.length - 1; i >= 0; i--) {
+            if (value >= s[i].dbz) {
+              return [s[i].r, s[i].g, s[i].b, 255] as [number, number, number, number];
+            }
           }
+          return [0, 0, 0, 0] as [number, number, number, number];
+        };
+
+    const bounds = level3GateBounds(layer, lat, lon);
+    const [[south, west], [north, east]] = bounds;
+    const latSpan = Math.max(0.01, north - south);
+    const lonSpan = Math.max(0.01, east - west);
+    const cosLat = Math.max(0.2, Math.cos(lat * DEG));
+    const width = maxSize;
+    const height = Math.max(256, Math.round((width * latSpan) / (lonSpan * cosLat)));
+
+    const imageData = new ImageData(width, height);
+    const d = imageData.data;
+
+    for (let py = 0; py < height; py++) {
+      const gateLat = north - (py / Math.max(1, height - 1)) * latSpan;
+      for (let px = 0; px < width; px++) {
+        const gateLon = west + (px / Math.max(1, width - 1)) * lonSpan;
+        const val = sampleLevel3RadialInterp(layer, lat, lon, gateLat, gateLon);
+        const i = (py * width + px) * 4;
+        if (val == null) {
+          d[i + 3] = 0;
+          continue;
         }
-        return [0, 0, 0, 0] as [number, number, number, number];
-      };
-
-  const bounds = level3GateBounds(layer, lat, lon);
-  const [[south, west], [north, east]] = bounds;
-  const latSpan = Math.max(0.01, north - south);
-  const lonSpan = Math.max(0.01, east - west);
-  const cosLat = Math.max(0.2, Math.cos(lat * DEG));
-  const width = maxSize;
-  const height = Math.max(256, Math.round((width * latSpan) / (lonSpan * cosLat)));
-
-  const imageData = new ImageData(width, height);
-  const d = imageData.data;
-
-  for (let py = 0; py < height; py++) {
-    const gateLat = north - (py / Math.max(1, height - 1)) * latSpan;
-    for (let px = 0; px < width; px++) {
-      const gateLon = west + (px / Math.max(1, width - 1)) * lonSpan;
-      const val = sampleLevel3RadialInterp(layer, lat, lon, gateLat, gateLon);
-      const i = (py * width + px) * 4;
-      if (val == null) {
-        d[i + 3] = 0;
-        continue;
+        const [r, g, b, a] = sampleColor(val, stops);
+        d[i] = r;
+        d[i + 1] = g;
+        d[i + 2] = b;
+        d[i + 3] = a;
       }
-      const [r, g, b, a] = sampleColor(val, stops);
-      d[i] = r;
-      d[i + 1] = g;
-      d[i + 2] = b;
-      d[i + 3] = a;
     }
-  }
 
-  const response: RenderResponse = { imageData, bounds };
-  self.postMessage(response, [imageData.data.buffer]);
+    self.postMessage({ imageData, bounds }, [imageData.data.buffer]);
+  } catch (error) {
+    self.postMessage({ error: String(error) });
+  }
 };

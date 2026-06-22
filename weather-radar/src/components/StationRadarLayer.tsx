@@ -4,6 +4,7 @@ import L from "leaflet";
 import type { RadarStation } from "@/data/stations";
 import {
   iemRidgeTileUrl,
+  iemProductId,
   isIemProductSupported,
   isReflectivityProduct,
   type StationRadarFrame,
@@ -43,15 +44,12 @@ export default function StationRadarLayer({
 
   // Convert product + tilt to IEM product code (N0B -> N1B, N2B, N3B for higher tilts)
   const iemProduct = useMemo(() => {
-    const baseProd = product.toUpperCase();
-    if (baseProd === "N0Q") {
-      // N0Q maps to N0B, N1B, N2B, N3B
-      return tilt === 0 ? "N0B" : `N${tilt}B`;
-    }
-    if (baseProd === "N0B" && tilt > 0) {
+    const baseProd = iemProductId(product);
+    // For base reflectivity, map tilt to N0B, N1B, N2B, N3B
+    if (baseProd === "N0B" && tilt > 0 && tilt <= 3) {
       return `N${tilt}B`;
     }
-    return product;
+    return baseProd;
   }, [product, tilt]);
 
   const useCustomReflectivity =

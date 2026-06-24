@@ -97,6 +97,13 @@ const EUROPEAN_COUNTRY_NAMES = new Set([
   "ukraine",
   "united kingdom",
   "vatican city",
+  "great britain",
+  "england",
+  "scotland",
+  "wales",
+  "northern ireland",
+  "uk",
+  "gb",
 ]);
 
 function isEuropeanCountry(country?: string | null): boolean {
@@ -106,7 +113,7 @@ function isEuropeanCountry(country?: string | null): boolean {
 
 function isConvectiveEvent(text: string): boolean {
   const lower = text.toLowerCase();
-  return /\b(thunderstorm|lightning|hail|severe weather|gewitter|unwetter|orage|tempête|tempete|storm warning|storm forecast|convective|supercell|tornado|grainsize|foudre|blitz)\b/.test(
+  return /\b(thunderstorm|lightning|hail|severe weather|gewitter|unwetter|orage|tempête|tempete|storm warning|storm forecast|convective|supercell|tornado|grainsize|foudre|blitz|heavy rain|heavy rainfall|flash flood|flash flooding|strong wind|strong winds|violent storm|violent storms|extreme weather|dangerous weather|adverse weather|storm|storms|thunder|thunders|tornados|tornadoes|hailstorm|hailstorms|downburst|downbursts|squall line|squall lines|mesocyclone|mesocyclones|wall cloud|wall clouds|funnel cloud|funnel clouds|waterspout|waterspouts|damaging wind|damaging winds|large hail|severe thunderstorm|severe thunderstorms)\b/.test(
     lower,
   );
 }
@@ -169,11 +176,12 @@ export function normalizeEuropeanConvectiveAlerts(
     .filter((feature) => {
       const props = feature.properties as AlertFeatureProperties | undefined;
       if (!props) return false;
-      if (!isEuropeanCountry(props.country)) return false;
-      return isConvectiveEvent(`${props.event} ${props.headline ?? ""}`);
+      const isEuro = isEuropeanCountry(props.country);
+      const isConv = isConvectiveEvent(`${props.event} ${props.headline ?? ""}`);
+      return isEuro && isConv;
     })
     .map((feature, index) => {
-      const props = feature.properties as AlertFeatureProperties;
+      const props = feature.properties as unknown as AlertFeatureProperties;
       const colors = severityColors(props.severity);
       const area = props.area ? ` · ${props.area}` : "";
 
@@ -193,6 +201,7 @@ export function normalizeEuropeanConvectiveAlerts(
       };
     });
 
+  console.log("[Europe Risk] Final European convective features:", features.length);
   return { type: "FeatureCollection", features };
 }
 

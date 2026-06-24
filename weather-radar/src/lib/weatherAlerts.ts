@@ -227,22 +227,27 @@ async function fetchIfrcPage(offset: number): Promise<{
   count: number;
   items: unknown[];
 }> {
-  const data = await fetchJson<{
-    data?: { public?: { alerts?: { count: number; items: unknown[] } } };
-    errors?: unknown[];
-  }>(IFRC_GRAPHQL_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      query: ALERTS_GRAPHQL,
-      variables: { limit: IFRC_PAGE_SIZE, offset },
-    }),
-  });
+  try {
+    const data = await fetchJson<{
+      data?: { public?: { alerts?: { count: number; items: unknown[] } } };
+      errors?: unknown[];
+    }>(IFRC_GRAPHQL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        query: ALERTS_GRAPHQL,
+        variables: { limit: IFRC_PAGE_SIZE, offset },
+      }),
+    });
 
-  if (data.errors?.length) throw new Error("IFRC alerts query failed");
-  const alerts = data.data?.public?.alerts;
-  if (!alerts) throw new Error("IFRC alerts unavailable");
-  return alerts;
+    if (data.errors?.length) throw new Error("IFRC alerts query failed");
+    const alerts = data.data?.public?.alerts;
+    if (!alerts) throw new Error("IFRC alerts unavailable");
+    return alerts;
+  } catch (err) {
+    console.error("IFRC alerts fetch failed:", err);
+    throw err;
+  }
 }
 
 export function normalizeIfrcAlerts(items: unknown[]): WeatherAlertsResult {
@@ -521,7 +526,8 @@ export async function fetchGlobalWeatherAlerts(): Promise<WeatherAlertsResult> {
   try {
     const result = await fetchIfrcAlerts();
     if (result.alerts.length > 0) return result;
-  } catch {
+  } catch (err) {
+    console.error("IFRC alerts unavailable, falling back to regional feeds:", err);
     /* fall through to regional feeds */
   }
 

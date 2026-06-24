@@ -291,7 +291,8 @@ export async function fetchConvectiveRiskOutlook(day: OutlookDay): Promise<Conve
   const geojson = mergeGeoJson(spc, mesocast, europe);
   const totalFeatures = geojson.features.length;
 
-  if (totalFeatures === 0) {
+  // Only throw error if SPC (primary source) fails and no other data is available
+  if (totalFeatures === 0 && spcResult.status === "rejected") {
     const errors = [spcResult, mesocastResult, europeResult]
       .filter((r): r is PromiseRejectedResult => r.status === "rejected")
       .map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)));

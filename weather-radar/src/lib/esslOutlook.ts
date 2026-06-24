@@ -40,38 +40,46 @@ export async function fetchEsslOutlookUrl(type: EsslOutlookType): Promise<string
   try {
     const dtg = await fetchLatestDtg();
     if (!dtg) {
-      throw new Error("No latest DTG available");
+      console.error("ESSL outlook: No latest DTG available");
+      return null;
     }
 
     const mapTypes = await fetchMapTypes(dtg);
     if (!mapTypes.includes(type)) {
-      throw new Error(`Map type ${type} not available`);
+      console.error(`ESSL outlook: Map type ${type} not available`);
+      return null;
     }
 
     const urls = await fetchMapTimesAndUrls(dtg, type);
     if (!urls?.length) {
-      throw new Error(`No map times/URLs for ${type}`);
+      console.error(`ESSL outlook: No map times/URLs for ${type}`);
+      return null;
     }
 
     // Use the latest valid time for the selected outlook type.
     return formatStormForecastUrl(urls[urls.length - 1].mapUrl);
   } catch (err) {
-    // Re-throw with more context, or return null if truly unavailable
+    // Return null instead of throwing to allow the app to continue
     const msg = err instanceof Error ? err.message : String(err);
     console.error("ESSL outlook fetch failed:", msg);
-    throw err;
+    return null;
   }
 }
 
 async function fetchLatestDtg(): Promise<string | null> {
-  const url = formatStormForecastUrl("/storm_query_2.php?q=getlast0012init");
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`getlast0012init returned ${res.status}`);
+  try {
+    const url = formatStormForecastUrl("/storm_query_2.php?q=getlast0012init");
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`getlast0012init returned ${res.status}`);
+    }
+    const text = await res.text();
+    const trimmed = text.trim();
+    return trimmed || null;
+  } catch (err) {
+    console.error("Failed to fetch latest DTG:", err);
+    return null;
   }
-  const text = await res.text();
-  const trimmed = text.trim();
-  return trimmed || null;
 }
 
 async function fetchMapTypes(dtg: string): Promise<EsslOutlookType[]> {

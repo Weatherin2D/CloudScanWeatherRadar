@@ -38,16 +38,16 @@ export interface ConvectiveRiskProperties extends SpcOutlookProperties {
   risk?: string;
   country?: string;
   event?: string;
+  isConditional?: boolean;
+  isHatched?: boolean;
 }
-
-const MESOCAST_DAY1_PATH = "/wp-json/metconvect-nowcast/v1/day1";
 
 function mesoCastBaseUrl(): string {
   return proxiedApiBase("/api/mesocast", "https://mesocast.uk");
 }
 
-export function mesoCastOutlookUrl(): string {
-  return `${mesoCastBaseUrl()}${MESOCAST_DAY1_PATH}`;
+export function mesoCastOutlookUrl(day: OutlookDay = 1): string {
+  return `${mesoCastBaseUrl()}/wp-json/metconvect-nowcast/v1/day${day}`;
 }
 
 const EUROPEAN_COUNTRY_NAMES = new Set([
@@ -141,6 +141,8 @@ export function normalizeMesoCastGeoJson(raw: unknown): GeoJsonFeatureCollection
       const risk = String(props.risk ?? "marginal");
       const title = String(props.title ?? mesoCastLegendForRisk(risk).label);
       const legend = mesoCastLegendForRisk(risk);
+      const isConditional = Boolean(props.conditional);
+      const isHatched = Boolean(props.hatched);
 
       return {
         ...feature,
@@ -149,9 +151,11 @@ export function normalizeMesoCastGeoJson(raw: unknown): GeoJsonFeatureCollection
           riskSource: "mesocast",
           risk,
           LABEL: title,
-          LABEL2: `${legend.name} · MesoCast`,
+          LABEL2: `${legend.name}${isConditional ? " (Conditional)" : ""}${isHatched ? " (Hatched)" : ""} · MesoCast`,
           fill: legend.fill,
           stroke: legend.stroke,
+          isConditional,
+          isHatched,
         } satisfies ConvectiveRiskProperties,
       };
     }),
@@ -205,13 +209,25 @@ export function riskStyleForFeature(
   const fill = props?.fill ?? spcLegend?.fill ?? mesoLegend?.fill ?? "#888888";
   const stroke = props?.stroke ?? spcLegend?.stroke ?? mesoLegend?.stroke ?? "#666666";
   const isEuropeAlert = props?.riskSource === "europe";
+  const isMesoCast = props?.riskSource === "mesocast";
+  const isConditional = props?.isConditional;
+  const isHatched = props?.isHatched;
+
+  let dashArray: string | undefined;
+  if (isEuropeAlert) {
+    dashArray = "5 4";
+  } else if (isMesoCast && isConditional) {
+    dashArray = "8 4";
+  } else if (isMesoCast && isHatched) {
+    dashArray = "4 2";
+  }
 
   return {
     fillColor: fill,
     color: stroke,
     fillOpacity: opacity * (isEuropeAlert ? 0.35 : 0.45),
     weight: isEuropeAlert ? 2 : 2,
-    dashArray: isEuropeAlert ? "5 4" : undefined,
+    dashArray,
   };
 }
 
@@ -244,8 +260,8 @@ async function fetchSpcOutlook(day: OutlookDay): Promise<GeoJsonFeatureCollectio
   };
 }
 
-async function fetchMesoCastOutlook(): Promise<GeoJsonFeatureCollection> {
-  const res = await fetch(mesoCastOutlookUrl(), {
+async function fetchMesoCastOutlook(day: OutlookDay): Promise<GeoJsonFeatureCollection> {
+  const res = await fetch(mesoCastOutlookUrl(day), {
     headers: { Accept: "application/json" },
   });
   if (!res.ok) throw new Error(`MesoCast outlook unavailable (${res.status})`);
@@ -261,7 +277,7 @@ async function fetchEuropeanConvectiveOutlook(): Promise<GeoJsonFeatureCollectio
 export async function fetchConvectiveRiskOutlook(day: OutlookDay): Promise<ConvectiveRiskOutlook> {
   const [spcResult, mesocastResult, europeResult] = await Promise.allSettled([
     fetchSpcOutlook(day),
-    fetchMesoCastOutlook(),
+    fetchMesoCastOutlook(day),
     fetchEuropeanConvectiveOutlook(),
   ]);
 

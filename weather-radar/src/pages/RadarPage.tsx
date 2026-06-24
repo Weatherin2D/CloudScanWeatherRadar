@@ -505,7 +505,7 @@ function SettingsPanel({
                     ))}
                   </div>
                   <p className="text-[10px] text-gray-600 mt-1.5">
-                    US: NOAA SPC (selected day) · Europe: MesoCast outlook + active thunderstorm warnings
+                    US: NOAA SPC (selected day) · Europe: MesoCast (selected day) + active thunderstorm warnings
                   </p>
                 </div>
 
@@ -2356,8 +2356,8 @@ export default function RadarPage() {
                         <span className="text-gray-400">{item.name}</span>
                       </div>
                     ))}
-                    <p className="text-[10px] text-gray-500 mt-2 mb-1">Europe · MesoCast</p>
-                    {MESOCAST_RISK_LEGEND.slice(0, 4).map((item) => (
+                    <p className="text-[10px] text-gray-500 mt-2 mb-1">Europe · MesoCast Day {settings.weatherRiskDay}</p>
+                    {MESOCAST_RISK_LEGEND.map((item) => (
                       <div key={item.key} className="flex items-center gap-2 mb-0.5">
                         <span
                           className="w-3 h-2 rounded-sm border flex-shrink-0"
@@ -2366,6 +2366,9 @@ export default function RadarPage() {
                         <span className="text-gray-400">{item.name}</span>
                       </div>
                     ))}
+                    <p className="text-[10px] text-gray-600 mt-2">
+                      Dashed: Conditional (8 4) · Hatched (4 2)
+                    </p>
                     {weatherRiskLoading && (
                       <p className="mt-1.5 text-gray-500">Loading outlook…</p>
                     )}

@@ -65,7 +65,7 @@ import {
   DEFAULT_RADAR_FRAME_LIMIT,
   MAX_GLOBAL_RADAR_FRAME_LIMIT,
   MAX_STATION_RADAR_FRAME_LIMIT,
-  RADAR_LOOKBACK_HOURS,
+  formatRadarFrameDuration,
   sliceRecentGlobalFrames,
 } from "@/lib/radarFrameLimits";
 import SatelliteOverlayLayer from "@/components/SatelliteOverlayLayer";
@@ -174,6 +174,8 @@ function SettingsPanel({
     satelliteProduct,
   } = settings;
   const fps = (1000 / animSpeed).toFixed(1);
+  const globalFrames = clampGlobalFrameLimit(globalFrameLimit);
+  const stationFrames = clampStationFrameLimit(stationFrameLimit);
 
   return (
     <>
@@ -214,50 +216,57 @@ function SettingsPanel({
             <div className="mb-4">
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-sm text-gray-300">Global Frame Count</label>
-                <span className="text-xs text-blue-400 font-mono">
-                  {clampGlobalFrameLimit(globalFrameLimit)} / {MAX_GLOBAL_RADAR_FRAME_LIMIT}
+                <span className="text-xs text-blue-400 font-mono text-right">
+                  {globalFrames} / {MAX_GLOBAL_RADAR_FRAME_LIMIT}{" "}
+                  ({formatRadarFrameDuration(globalFrames)} / {formatRadarFrameDuration(MAX_GLOBAL_RADAR_FRAME_LIMIT)})
                 </span>
               </div>
               <p className="text-[10px] text-gray-500 mb-2">
-                Slider maximum loads {RADAR_LOOKBACK_HOURS} hours (RainViewer worldwide + IEM US archive)
+                RainViewer worldwide + IEM US archive
               </p>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500 w-7">1</span>
+                <span className="text-[10px] text-gray-500 w-12 text-right shrink-0">
+                  1<br />({formatRadarFrameDuration(1)})
+                </span>
                 <input
                   type="range"
                   min={1}
                   max={MAX_GLOBAL_RADAR_FRAME_LIMIT}
                   step={1}
-                  value={clampGlobalFrameLimit(globalFrameLimit)}
+                  value={globalFrames}
                   onChange={e => onChange({ globalFrameLimit: Number(e.target.value) })}
                   className="flex-1 accent-blue-500 h-1.5"
                 />
-                <span className="text-xs text-gray-500 w-7">{MAX_GLOBAL_RADAR_FRAME_LIMIT}</span>
+                <span className="text-[10px] text-gray-500 w-12 shrink-0">
+                  {MAX_GLOBAL_RADAR_FRAME_LIMIT}<br />({formatRadarFrameDuration(MAX_GLOBAL_RADAR_FRAME_LIMIT)})
+                </span>
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-sm text-gray-300">Station Frame Count</label>
-                <span className="text-xs text-blue-400 font-mono">
-                  {clampStationFrameLimit(stationFrameLimit)} / {MAX_STATION_RADAR_FRAME_LIMIT}
+                <span className="text-xs text-blue-400 font-mono text-right">
+                  {stationFrames} / {MAX_STATION_RADAR_FRAME_LIMIT}{" "}
+                  ({formatRadarFrameDuration(stationFrames)} / {formatRadarFrameDuration(MAX_STATION_RADAR_FRAME_LIMIT)})
                 </span>
               </div>
-              <p className="text-[10px] text-gray-500 mb-2">
-                Slider maximum loads {RADAR_LOOKBACK_HOURS} hours of recent scans
-              </p>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500 w-7">1</span>
+                <span className="text-[10px] text-gray-500 w-12 text-right shrink-0">
+                  1<br />({formatRadarFrameDuration(1)})
+                </span>
                 <input
                   type="range"
                   min={1}
                   max={MAX_STATION_RADAR_FRAME_LIMIT}
                   step={1}
-                  value={clampStationFrameLimit(stationFrameLimit)}
+                  value={stationFrames}
                   onChange={e => onChange({ stationFrameLimit: Number(e.target.value) })}
                   className="flex-1 accent-blue-500 h-1.5"
                 />
-                <span className="text-xs text-gray-500 w-7">{MAX_STATION_RADAR_FRAME_LIMIT}</span>
+                <span className="text-[10px] text-gray-500 w-12 shrink-0">
+                  {MAX_STATION_RADAR_FRAME_LIMIT}<br />({formatRadarFrameDuration(MAX_STATION_RADAR_FRAME_LIMIT)})
+                </span>
               </div>
             </div>
           </section>

@@ -80,3 +80,17 @@ export function iemListingMinutes(frameCount: number): number {
 export function level3ListingHours(frameCount: number): number {
   return stationListingHours(frameCount);
 }
+
+/** Human-readable lookback for a frame count (e.g. "1 h 5 min", "24 h"). */
+export function formatRadarFrameDuration(
+  frameCount: number,
+  intervalMinutes = STATION_RADAR_SCAN_INTERVAL_MINUTES,
+): string {
+  const frames = Math.max(MIN_RADAR_FRAME_LIMIT, Math.floor(frameCount));
+  const totalMin = frames * intervalMinutes;
+  if (totalMin < 60) return `${totalMin} min`;
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  if (mins === 0) return `${hours} h`;
+  return `${hours} h ${mins} min`;
+}

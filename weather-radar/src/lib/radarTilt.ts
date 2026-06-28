@@ -4,7 +4,7 @@ import {
   type RadarDataSource,
   type RadarProduct,
 } from "./radarProducts";
-import { isIemProductSupported } from "./iemRadar";
+import { iemProductForTilt, isIemProductSupported } from "./iemRadar";
 
 export interface RadarTilt {
   index: number;
@@ -81,13 +81,7 @@ export function resolveStationDataSource(
 
   // Use IEM tiles for ALL tilts - instant, reliable, high quality
   // IEM serves N0B, N1B, N2B, N3B for all 4 tilt angles
-  if (baseSource === "iem" && isIemProductSupported(productId)) {
-    // Convert tilt index to IEM product code
-    const baseProd = iemProductId(productId);
-    if (baseProd === "N0B" && tiltIndex > 0 && tiltIndex <= 3) {
-      // IEM has N1B, N2B, N3B for higher tilts
-      return "iem";
-    }
+  if (baseSource === "iem" && isIemProductSupported(iemProductForTilt(productId, tiltIndex))) {
     return "iem";
   }
 

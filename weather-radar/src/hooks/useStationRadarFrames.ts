@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import type { RadarStation } from "@/data/stations";
 import {
-  iemProductId,
+  iemProductForTilt,
   iemRidgeSector,
   iemScanIsoToTms,
   isIemProductSupported,
@@ -30,7 +30,7 @@ export function useStationRadarFrames(
     if (
       !shouldUseIemFrames(station?.country, uiProduct, tiltIndex)
       || !station?.id
-      || !isIemProductSupported(uiProduct)
+      || !isIemProductSupported(iemProductForTilt(uiProduct, tiltIndex))
     ) {
       setFrames([]);
       setLoading(false);
@@ -39,7 +39,7 @@ export function useStationRadarFrames(
 
     let cancelled = false;
     const sector = iemRidgeSector(station.id);
-    const product = iemProductId(uiProduct);
+    const product = iemProductForTilt(uiProduct, tiltIndex);
     const listingMinutes = iemListingMinutes(frameCount);
 
     const load = async (initial: boolean) => {

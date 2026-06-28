@@ -29,13 +29,12 @@ export default function Level3RadarLayer({
       const parsed = await parseLevel3(await res.arrayBuffer());
       if (!parsed) return null;
       
-      // Use smaller resolution for Level 3 when it's used (higher tilts only)
       return renderLevel3Geographic(
         parsed.layer,
         parsed.latitude,
         parsed.longitude,
         stops,
-        800,
+        1024,
         reflectivity,
         reflectivityFade,
       );

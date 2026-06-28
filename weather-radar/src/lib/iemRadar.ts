@@ -40,6 +40,15 @@ export function iemProductId(uiProduct: string): string {
   return IEM_PRODUCT_MAP[id] ?? id;
 }
 
+/** Map UI product + tilt index to the IEM RIDGE product code (N0B–N3B). */
+export function iemProductForTilt(uiProduct: string, tiltIndex: number): string {
+  const baseProd = iemProductId(uiProduct);
+  if (baseProd === "N0B" && tiltIndex > 0 && tiltIndex <= 3) {
+    return `N${tiltIndex}B`;
+  }
+  return baseProd;
+}
+
 /** Convert IEM ISO scan time to TMS timestamp (YYYYMMDDHHmm). */
 export function iemScanIsoToTms(iso: string): string {
   return iso.replace(/[-:TZ]/g, "").slice(0, 12);

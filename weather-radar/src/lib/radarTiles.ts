@@ -29,8 +29,10 @@ export const IEM_RIDGE_TILE_OPTS: TileLayerOptions = {
   attribution: "IEM/NEXRAD",
 };
 
-/** Per-station overlay — keep georeferenced tiles crisp (no CSS scaling during pan/zoom). */
+/** Per-station overlay — IEM N0B is 8-bit super-res; native tiles are sharpest through z10. */
 export const STATION_IEM_TILE_OPTS: TileLayerOptions = {
   ...IEM_RIDGE_TILE_OPTS,
-  keepBuffer: 4,
+  maxNativeZoom: 10,
+  maxZoom: 18,
+  keepBuffer: 6,
 };

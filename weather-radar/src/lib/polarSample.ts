@@ -1,4 +1,5 @@
 import type { Level3RadialLayer } from "./level3Parse";
+import { level3BinCount, level3RangeScaleKm } from "./level3Geometry";
 import type { OdimScanMeta } from "./renderPolar";
 
 const DEG = Math.PI / 180;
@@ -57,7 +58,8 @@ export function destinationPoint(
 }
 
 function firstGateKm(layer: Level3RadialLayer): number {
-  return Math.max(0.25, (layer.firstBin ?? 0) * layer.rangeScale);
+  const scale = level3RangeScaleKm(layer);
+  return Math.max(0.25, (layer.firstBin ?? 0) * scale);
 }
 
 function sampleCoordsAtRange(
@@ -138,7 +140,8 @@ function sampleRadialRange(
   layer: Level3RadialLayer,
   rangeKm: number,
 ): number | null {
-  const binF = rangeKm / layer.rangeScale - layer.firstBin;
+  const scale = level3RangeScaleKm(layer);
+  const binF = rangeKm / scale - layer.firstBin;
   const b0 = Math.floor(binF);
   const frac = binF - b0;
   const b1 = b0 + 1;
@@ -228,10 +231,12 @@ export function sampleLevel3Radial(
   }
   if (!best) return null;
 
-  const binF = rangeKm / layer.rangeScale - layer.firstBin;
+  const scale = level3RangeScaleKm(layer);
+  const binF = rangeKm / scale - layer.firstBin;
   const bin = Math.round(binF);
-  if (bin < 0 || bin >= best.bins.length) return null;
-  return best.bins[bin];
+  const maxBin = level3BinCount(layer) - 1;
+  if (bin < 0 || bin > maxBin) return null;
+  return best.bins[bin] ?? null;
 }
 
 /** Range-interpolated Level-III sample (smoother cross-sections). */

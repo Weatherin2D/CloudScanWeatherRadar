@@ -42,6 +42,16 @@ export default function PolarRadarLayer<T extends PolarFrame>({
     bumpCache((n) => n + 1);
   }, [stops]);
 
+  const frameScope = frames[0]?.id?.split("_").slice(0, 2).join("_") ?? "";
+
+  useEffect(() => {
+    cacheRef.current.clear();
+    loadingRef.current.clear();
+    overlaysRef.current.forEach((ov) => ov.remove());
+    overlaysRef.current.clear();
+    bumpCache((n) => n + 1);
+  }, [frameScope]);
+
   useEffect(() => {
     if (!frames.length) return;
     let cancelled = false;

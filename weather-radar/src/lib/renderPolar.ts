@@ -7,6 +7,13 @@ import {
 } from "./palPalette";
 import type { Level3RadialLayer } from "./level3Parse";
 import {
+  destination as geoDestination,
+  level3BinCount,
+  level3BinRangeKm,
+  level3CoverageBounds,
+  radialAzimuthSpan,
+} from "./level3Geometry";
+import {
   sampleLevel3RadialInterp,
   sampleOdimRadialInterp,
 } from "./polarSample";
@@ -122,26 +129,6 @@ function projectToCanvas(
   return [px, py];
 }
 
-function radialAzimuthSpan(
-  radial: Level3RadialLayer["radials"][0],
-  radialIndex: number,
-  layer: Level3RadialLayer,
-): [number, number] {
-  const next = layer.radials[(radialIndex + 1) % layer.radials.length];
-  const fallback = layer.radials.length > 0 ? 360 / layer.radials.length : 1;
-  const delta = radial.angleDelta > 0
-    ? radial.angleDelta
-    : next
-      ? ((next.startAngle - radial.startAngle + 360) % 360) || fallback
-      : fallback;
-  const half = delta / 2;
-  return [radial.startAngle - half, radial.startAngle + half];
-}
-
-/**
- * Render Level-III as native polar range gates (wedge bins that widen with distance).
- * Matches professional radar apps — not a uniform lat/lon pixel grid.
- */
 export function renderLevel3PolarGates(
   layer: Level3RadialLayer,
   lat: number,
@@ -155,11 +142,15 @@ export function renderLevel3PolarGates(
     ? (value: number, s: ColorStop[]) => colorAtReflectivityDbz(value, s, fade)
     : colorAtDbz;
 
-  const bounds = level3GateBounds(layer, lat, lon);
-  const [[, west], [north, east]] = bounds;
-  const latSpan = Math.max(0.01, bounds[1][0] - bounds[0][0]);
+  const bounds = level3CoverageBounds(layer, lat, lon);
+  const south = bounds[0][0];
+  const west = bounds[0][1];
+  const north = bounds[1][0];
+  const east = bounds[1][1];
+  const latSpan = Math.max(0.01, north - south);
   const lonSpan = Math.max(0.01, east - west);
   const { width, height } = geographicCanvasSize(lat, latSpan, lonSpan, maxSize);
+  const binLimit = level3BinCount(layer);
 
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -175,16 +166,16 @@ export function renderLevel3PolarGates(
   for (let ri = 0; ri < layer.radials.length; ri++) {
     const radial = layer.radials[ri]!;
     const [az0, az1] = radialAzimuthSpan(radial, ri, layer);
+    const binsInRadial = Math.min(radial.bins.length, binLimit);
 
-    for (let b = radial.bins.length - 1; b >= 0; b--) {
+    for (let b = binsInRadial - 1; b >= 0; b--) {
       const val = radial.bins[b];
       if (val == null) continue;
 
       const [r, g, bCol, a] = sampleColor(val, stops);
       if (a === 0) continue;
 
-      const r0 = (layer.firstBin + b) * layer.rangeScale;
-      const r1 = (layer.firstBin + b + 1) * layer.rangeScale;
+      const [r0, r1] = level3BinRangeKm(layer, b);
       if (r1 <= 0) continue;
 
       const p1 = destination(lat, lon, az0, r0);

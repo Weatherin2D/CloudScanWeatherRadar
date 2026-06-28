@@ -76,6 +76,13 @@ export function iemListingMinutes(frameCount: number): number {
   return stationListingHours(frameCount) * 60;
 }
 
+/** Short IEM listing window for a fast first response (~15 frames at 5 min). */
+export const IEM_FAST_LIST_MINUTES = 75;
+
+export function iemFastListingMinutes(frameCount: number): number {
+  return Math.min(IEM_FAST_LIST_MINUTES, iemListingMinutes(frameCount));
+}
+
 /** @deprecated use stationListingHours */
 export function level3ListingHours(frameCount: number): number {
   return stationListingHours(frameCount);

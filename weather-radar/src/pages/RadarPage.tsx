@@ -1268,7 +1268,7 @@ export default function RadarPage() {
         ...v,
         lat: selectedStation.lat,
         lon: selectedStation.lon,
-        zoom: Math.max(v.zoom, 7),
+        zoom: Math.max(v.zoom, 8),
       }));
     }
   }, [selectedStation?.id, selectedStation?.lat, selectedStation?.lon]);
@@ -1476,7 +1476,7 @@ export default function RadarPage() {
     }
     const loading =
       dataSource === "iem"
-        ? stationFramesLoading
+        ? stationFramesLoading && stationFrames.length === 0
         : dataSource === "level3"
           ? level3Loading
           : operaLoading;
@@ -2115,7 +2115,7 @@ export default function RadarPage() {
 
             {mode === "station" && (
               <>
-                <MapFlyTo station={selectedStation} />
+                <MapFlyTo station={selectedStation} instant />
                 <StationMarkers
                   stations={visibleStations}
                   selected={selectedStation}
@@ -2128,7 +2128,6 @@ export default function RadarPage() {
                     product={selectedProduct.id}
                     tilt={selectedTilt}
                     frames={stationFrames}
-                    framesLoading={stationFramesLoading}
                     frameIndex={frameIndex}
                     opacity={opacity}
                     reflectivityLut={

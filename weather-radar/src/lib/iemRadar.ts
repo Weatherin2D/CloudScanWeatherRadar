@@ -23,6 +23,23 @@ export interface StationRadarFrame {
   tmsId: string;
 }
 
+/** IEM TMS timestamp for the most recent volume scan (loads without a listing API call). */
+export const IEM_LATEST_TMS_ID = "0";
+
+export const IEM_LATEST_FRAME: StationRadarFrame = {
+  time: 0,
+  tmsId: IEM_LATEST_TMS_ID,
+};
+
+/** Keep the newest frame on the fast "latest" tile URL so tiles do not reload after listing. */
+export function withLatestFrameAlias(frames: StationRadarFrame[]): StationRadarFrame[] {
+  if (!frames.length) return frames;
+  const out = [...frames];
+  const last = out[out.length - 1]!;
+  out[out.length - 1] = { ...last, tmsId: IEM_LATEST_TMS_ID };
+  return out;
+}
+
 /**
  * Convert NWS site ID to IEM RIDGE sector code.
  * NWS uses 4-char IDs (KMRX, PGUA); IEM TMS expects 3-char sectors (MRX, GUA).
@@ -71,6 +88,27 @@ export function iemRidgeTileUrl(
   const sector = iemRidgeSector(stationId);
   const prod = iemProductId(product);
   return `${IEM_RIDGE_TMS}/ridge::${sector}-${prod}-${tmsTimestamp}/{z}/{x}/{y}.png`;
+}
+
+/** Warm the browser cache for the station viewport before the tile layer mounts. */
+export function prefetchIemStationTiles(
+  stationId: string,
+  product: string,
+  lat: number,
+  lon: number,
+  zoom = 8,
+): void {
+  const sector = iemRidgeSector(stationId);
+  const prod = iemProductId(product);
+  const { x, y } = latLonToTile(lat, lon, zoom);
+  const base = `${IEM_RIDGE_TMS}/ridge::${sector}-${prod}-${IEM_LATEST_TMS_ID}`;
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.src = `${base}/${zoom}/${x + dx}/${y + dy}.png`;
+    }
+  }
 }
 
 /** Map lat/lon to slippy-map tile indices at a given zoom. */

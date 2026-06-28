@@ -29,10 +29,12 @@ export const IEM_RIDGE_TILE_OPTS: TileLayerOptions = {
   attribution: "IEM/NEXRAD",
 };
 
-/** Per-station overlay — IEM N0B is 8-bit super-res; native tiles are sharpest through z10. */
+/** Per-station overlay — IEM N0B–N3B are 8-bit super-res; load tiles immediately while panning. */
 export const STATION_IEM_TILE_OPTS: TileLayerOptions = {
   ...IEM_RIDGE_TILE_OPTS,
-  maxNativeZoom: 10,
+  updateWhenIdle: false,
+  updateWhenZooming: true,
+  maxNativeZoom: 12,
   maxZoom: 18,
-  keepBuffer: 6,
+  keepBuffer: 8,
 };

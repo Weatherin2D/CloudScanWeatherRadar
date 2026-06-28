@@ -3,6 +3,7 @@ import { useMap } from "react-leaflet";
 import L from "leaflet";
 import type { RadarStation } from "@/data/stations";
 import {
+  IEM_LATEST_FRAME,
   iemRidgeTileUrl,
   iemProductForTilt,
   isIemProductSupported,
@@ -14,14 +15,11 @@ import { STATION_IEM_TILE_OPTS } from "@/lib/radarTiles";
 
 export type StationRadarStatus = "idle" | "loading" | "ready" | "unsupported" | "unavailable";
 
-const LATEST_SCAN_FRAME: StationRadarFrame = { time: 0, tmsId: "0" };
-
 interface Props {
   station: RadarStation | null;
   product: string;
   tilt?: number;
   frames: StationRadarFrame[];
-  framesLoading?: boolean;
   frameIndex: number;
   opacity: number;
   reflectivityLut?: Uint8ClampedArray | null;
@@ -32,7 +30,6 @@ export default function StationRadarLayer({
   product,
   tilt = 0,
   frames,
-  framesLoading = false,
   frameIndex,
   opacity,
   reflectivityLut,
@@ -52,9 +49,9 @@ export default function StationRadarLayer({
 
   const displayFrames = useMemo(() => {
     if (frames.length > 0) return frames;
-    if (framesLoading && station?.id) return [LATEST_SCAN_FRAME];
+    if (station?.id) return [IEM_LATEST_FRAME];
     return [];
-  }, [frames, framesLoading, station?.id]);
+  }, [frames, station?.id]);
 
   const safeFrameIndex = displayFrames.length > 0
     ? Math.min(frameIndex, displayFrames.length - 1)

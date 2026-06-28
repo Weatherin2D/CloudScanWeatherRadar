@@ -6,20 +6,32 @@ interface Props {
   station?: RadarStation | null;
   target?: { lat: number; lon: number } | null;
   zoom?: number;
+  /** Jump instantly instead of animating — radar tiles load sooner. */
+  instant?: boolean;
 }
 
-export default function MapFlyTo({ station, target, zoom = 7 }: Props) {
+export default function MapFlyTo({ station, target, zoom = 8, instant = false }: Props) {
   const map = useMap();
 
   useEffect(() => {
     if (station) {
-      map.flyTo([station.lat, station.lon], zoom, { duration: 0.8 });
+      const center: [number, number] = [station.lat, station.lon];
+      if (instant) {
+        map.setView(center, zoom, { animate: false });
+      } else {
+        map.flyTo(center, zoom, { duration: 0.8 });
+      }
       return;
     }
     if (target) {
-      map.flyTo([target.lat, target.lon], zoom, { duration: 0.8 });
+      const center: [number, number] = [target.lat, target.lon];
+      if (instant) {
+        map.setView(center, zoom, { animate: false });
+      } else {
+        map.flyTo(center, zoom, { duration: 0.8 });
+      }
     }
-  }, [station, target, zoom, map]);
+  }, [station, target, zoom, instant, map]);
 
   return null;
 }

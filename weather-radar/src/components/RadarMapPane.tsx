@@ -106,7 +106,7 @@ export default function RadarMapPane({
   const product = getRadarProduct(productId) ?? products[0];
   const dataSource = resolveStationDataSource(product.id, station.country, tiltIndex);
 
-  const { frames: stationFrames, loading: stationFramesLoading } = useStationRadarFrames(
+  const { frames: stationFrames } = useStationRadarFrames(
     station,
     product.id,
     tiltIndex,
@@ -194,7 +194,7 @@ export default function RadarMapPane({
             onViewChange={onMapViewChange}
             interactive={syncInteractive}
           />
-          {paneIndex === 0 && <MapFlyTo station={station} />}
+          {paneIndex === 0 && <MapFlyTo station={station} instant />}
 
           {dataSource === "iem" && (
             <StationRadarLayer
@@ -202,7 +202,6 @@ export default function RadarMapPane({
               product={product.id}
               tilt={tiltIndex}
               frames={stationFrames}
-              framesLoading={stationFramesLoading}
               frameIndex={frameIndex}
               opacity={opacity}
               reflectivityLut={

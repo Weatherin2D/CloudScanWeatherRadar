@@ -95,6 +95,195 @@ function odimGateBounds(scan: OdimScanMeta): [[number, number], [number, number]
   ];
 }
 
+function geographicCanvasSize(
+  lat: number,
+  latSpan: number,
+  lonSpan: number,
+  maxSize: number,
+): { width: number; height: number } {
+  const cosLat = Math.max(0.2, Math.cos(lat * DEG));
+  const width = maxSize;
+  const height = Math.max(256, Math.round((width * latSpan) / (lonSpan * cosLat)));
+  return { width, height };
+}
+
+function projectToCanvas(
+  gateLat: number,
+  gateLon: number,
+  north: number,
+  west: number,
+  latSpan: number,
+  lonSpan: number,
+  width: number,
+  height: number,
+): [number, number] {
+  const px = ((gateLon - west) / lonSpan) * (width - 1);
+  const py = ((north - gateLat) / latSpan) * (height - 1);
+  return [px, py];
+}
+
+function radialAzimuthSpan(
+  radial: Level3RadialLayer["radials"][0],
+  radialIndex: number,
+  layer: Level3RadialLayer,
+): [number, number] {
+  const next = layer.radials[(radialIndex + 1) % layer.radials.length];
+  const fallback = layer.radials.length > 0 ? 360 / layer.radials.length : 1;
+  const delta = radial.angleDelta > 0
+    ? radial.angleDelta
+    : next
+      ? ((next.startAngle - radial.startAngle + 360) % 360) || fallback
+      : fallback;
+  const half = delta / 2;
+  return [radial.startAngle - half, radial.startAngle + half];
+}
+
+/**
+ * Render Level-III as native polar range gates (wedge bins that widen with distance).
+ * Matches professional radar apps — not a uniform lat/lon pixel grid.
+ */
+export function renderLevel3PolarGates(
+  layer: Level3RadialLayer,
+  lat: number,
+  lon: number,
+  stops: ColorStop[],
+  maxSize = 2048,
+  reflectivity = false,
+  fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
+): PolarRenderResult {
+  const sampleColor = reflectivity
+    ? (value: number, s: ColorStop[]) => colorAtReflectivityDbz(value, s, fade)
+    : colorAtDbz;
+
+  const bounds = level3GateBounds(layer, lat, lon);
+  const [[, west], [north, east]] = bounds;
+  const latSpan = Math.max(0.01, bounds[1][0] - bounds[0][0]);
+  const lonSpan = Math.max(0.01, east - west);
+  const { width, height } = geographicCanvasSize(lat, latSpan, lonSpan, maxSize);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return { dataUrl: "", bounds };
+
+  ctx.imageSmoothingEnabled = false;
+
+  const project = (gLat: number, gLon: number) =>
+    projectToCanvas(gLat, gLon, north, west, latSpan, lonSpan, width, height);
+
+  for (let ri = 0; ri < layer.radials.length; ri++) {
+    const radial = layer.radials[ri]!;
+    const [az0, az1] = radialAzimuthSpan(radial, ri, layer);
+
+    for (let b = radial.bins.length - 1; b >= 0; b--) {
+      const val = radial.bins[b];
+      if (val == null) continue;
+
+      const [r, g, bCol, a] = sampleColor(val, stops);
+      if (a === 0) continue;
+
+      const r0 = (layer.firstBin + b) * layer.rangeScale;
+      const r1 = (layer.firstBin + b + 1) * layer.rangeScale;
+      if (r1 <= 0) continue;
+
+      const p1 = destination(lat, lon, az0, r0);
+      const p2 = destination(lat, lon, az1, r0);
+      const p3 = destination(lat, lon, az1, r1);
+      const p4 = destination(lat, lon, az0, r1);
+
+      const [x1, y1] = project(p1.lat, p1.lon);
+      const [x2, y2] = project(p2.lat, p2.lon);
+      const [x3, y3] = project(p3.lat, p3.lon);
+      const [x4, y4] = project(p4.lat, p4.lon);
+
+      ctx.fillStyle = `rgba(${r},${g},${bCol},${(a / 255).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.lineTo(x3, y3);
+      ctx.lineTo(x4, y4);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  return { dataUrl: canvas.toDataURL("image/png"), bounds };
+}
+
+/** Render ODIM SCAN as native polar range gates. */
+export function renderOdimPolarGates(
+  scan: OdimScanMeta,
+  stops: ColorStop[],
+  maxSize = 2048,
+  reflectivity = true,
+  fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
+): PolarRenderResult {
+  const sampleColor = reflectivity
+    ? (value: number, s: ColorStop[]) => colorAtReflectivityDbz(value, s, fade)
+    : colorAtDbz;
+
+  const bounds = odimGateBounds(scan);
+  const [[, west], [north, east]] = bounds;
+  const latSpan = Math.max(0.01, bounds[1][0] - bounds[0][0]);
+  const lonSpan = Math.max(0.01, east - west);
+  const { width, height } = geographicCanvasSize(scan.lat, latSpan, lonSpan, maxSize);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return { dataUrl: "", bounds };
+
+  ctx.imageSmoothingEnabled = false;
+
+  const { lat, lon, nbins, nrays, rstart, rscale, a1gate, values, nodata, undetect, gain, offset } =
+    scan;
+  const azStep = nrays > 0 ? 360 / nrays : 1;
+  const project = (gLat: number, gLon: number) =>
+    projectToCanvas(gLat, gLon, north, west, latSpan, lonSpan, width, height);
+
+  for (let ray = 0; ray < nrays; ray++) {
+    const az = (a1gate + ray * azStep) % 360;
+    const az0 = az - azStep / 2;
+    const az1 = az + azStep / 2;
+
+    for (let bin = nbins - 1; bin >= 0; bin--) {
+      const raw = values[ray * nbins + bin];
+      if (raw === nodata || raw === undetect || Number.isNaN(raw)) continue;
+      const val = raw * gain + offset;
+
+      const [r, g, bCol, a] = sampleColor(val, stops);
+      if (a === 0) continue;
+
+      const r0 = (rstart + bin * rscale) / 1000;
+      const r1 = (rstart + (bin + 1) * rscale) / 1000;
+      if (r1 <= 0) continue;
+
+      const p1 = destination(lat, lon, az0, r0);
+      const p2 = destination(lat, lon, az1, r0);
+      const p3 = destination(lat, lon, az1, r1);
+      const p4 = destination(lat, lon, az0, r1);
+
+      const [x1, y1] = project(p1.lat, p1.lon);
+      const [x2, y2] = project(p2.lat, p2.lon);
+      const [x3, y3] = project(p3.lat, p3.lon);
+      const [x4, y4] = project(p4.lat, p4.lon);
+
+      ctx.fillStyle = `rgba(${r},${g},${bCol},${(a / 255).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.lineTo(x3, y3);
+      ctx.lineTo(x4, y4);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  return { dataUrl: canvas.toDataURL("image/png"), bounds };
+}
+
 /** Render Level-III to a lat/lon-aligned PNG suitable for Leaflet image overlays. */
 export function renderLevel3Geographic(
   layer: Level3RadialLayer,

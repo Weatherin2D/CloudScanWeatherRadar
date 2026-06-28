@@ -57,18 +57,14 @@ export default function PolarRadarLayer<T extends PolarFrame>({
         const result = await loadFrame(frame);
         if (cancelled || !result) return;
         
-        // Keep ONLY 1 frame in cache at a time to minimize memory
-        if (cacheRef.current.size >= 1) {
-          // Clear all non-active frames
-          for (const [key, _] of cacheRef.current) {
-            if (key !== id) {
-              cacheRef.current.delete(key);
-              const overlay = overlaysRef.current.get(key);
-              if (overlay) {
-                overlay.remove();
-                overlaysRef.current.delete(key);
-              }
-            }
+        const maxCached = 4;
+        if (cacheRef.current.size >= maxCached) {
+          for (const key of [...cacheRef.current.keys()]) {
+            if (key === id) continue;
+            cacheRef.current.delete(key);
+            overlaysRef.current.get(key)?.remove();
+            overlaysRef.current.delete(key);
+            if (cacheRef.current.size < maxCached) break;
           }
         }
         
@@ -81,8 +77,15 @@ export default function PolarRadarLayer<T extends PolarFrame>({
       }
     };
 
-    // Load only active frame, no preloading
-    if (activeId) {
+    // Preload adjacent frames for animation
+    const activeIdx = frames.findIndex((f) => f.id === activeId);
+    if (activeIdx >= 0) {
+      const neighbors = [activeIdx, activeIdx + 1, activeIdx - 1];
+      for (const idx of neighbors) {
+        const frame = frames[(idx + frames.length) % frames.length];
+        if (frame) queueFrame(frame.id);
+      }
+    } else if (activeId) {
       queueFrame(activeId);
     }
 

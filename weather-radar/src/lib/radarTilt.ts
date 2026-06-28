@@ -77,16 +77,15 @@ export function resolveStationDataSource(
   if (country === "eu") return "opera";
   if (country !== "us") return null;
 
-  if (!productSupportsTilt(product)) return baseSource;
-
-  // Use IEM tiles for ALL tilts - instant, reliable, high quality
-  // IEM serves N0B, N1B, N2B, N3B for all 4 tilt angles
-  if (baseSource === "iem" && isIemProductSupported(iemProductForTilt(productId, tiltIndex))) {
-    return "iem";
+  if (!productSupportsTilt(product)) {
+    if (baseSource === "iem" && isIemProductSupported(iemProductForTilt(productId, tiltIndex))) {
+      return "iem";
+    }
+    return baseSource;
   }
 
-  // Fallback to Level 3 if IEM doesn't support the product
-  if (baseSource === "level3") return "level3";
+  // Tilted products: Level-III polar gates (variable bin size, RadarScope-style)
+  if (baseSource === "iem" || baseSource === "level3") return "level3";
 
   return baseSource;
 }

@@ -209,7 +209,7 @@ export default function RadarMapPane({
               }
             />
           )}
-          {dataSource === "level3" && level3Frames.length > 0 && (
+          {dataSource === "level3" && (
             <Suspense fallback={null}>
               <Level3RadarLayer
                 frames={level3Frames}

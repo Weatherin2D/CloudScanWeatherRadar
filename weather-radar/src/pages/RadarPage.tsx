@@ -1478,7 +1478,7 @@ export default function RadarPage() {
       dataSource === "iem"
         ? stationFramesLoading && stationFrames.length === 0
         : dataSource === "level3"
-          ? level3Loading
+          ? level3Loading && level3Frames.length === 0
           : operaLoading;
     if (loading) {
       setStationRadarStatus("loading");
@@ -2137,7 +2137,7 @@ export default function RadarPage() {
                     }
                   />
                 )}
-                {selectedStation && dataSource === "level3" && level3Frames.length > 0 && (
+                {selectedStation && dataSource === "level3" && (
                   <Suspense fallback={null}>
                     <Level3RadarLayer
                       frames={level3Frames}

@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import type { RadarStation } from "@/data/stations";
 import type { ColorStop, ReflectivityFadeSettings } from "@/lib/palPalette";
 import { loadOdimScan, type OperaFrame } from "@/lib/operaRadar";
-import { renderOdimGeographic } from "@/lib/renderPolar";
+import { renderOdimPolarGates } from "@/lib/renderPolar";
 import PolarRadarLayer from "./PolarRadarLayer";
 
 interface Props {
@@ -29,7 +29,7 @@ export default function OperaRadarLayer({
       try {
         const scan = await loadOdimScan(frame.odimUrl, station.lat, station.lon);
         if (!scan) return null;
-        return renderOdimGeographic(scan, stops, 800, reflectivity, reflectivityFade);
+        return renderOdimPolarGates(scan, stops, 2048, reflectivity, reflectivityFade);
       } catch {
         return null;
       }

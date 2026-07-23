@@ -2,12 +2,13 @@ import type { ColorStop } from "./palPalette";
 import {
   colorAtDbz,
   colorAtReflectivityDbz,
+  dbzToLutIndex,
   DEFAULT_REFLECTIVITY_FADE,
+  stopsToDbzUint32LUT,
   type ReflectivityFadeSettings,
 } from "./palPalette";
 import type { Level3RadialLayer } from "./level3Parse";
 import {
-  destination as geoDestination,
   level3BinCount,
   level3BinRangeKm,
   level3CoverageBounds,
@@ -19,11 +20,33 @@ import {
 } from "./polarSample";
 
 export interface PolarRenderResult {
+  /** Blob URL or data URL for Leaflet ImageOverlay. */
   dataUrl: string;
   bounds: [[number, number], [number, number]];
+  /** True when dataUrl is an object URL that should be revoked on eviction. */
+  isObjectUrl?: boolean;
 }
 
 export type GeographicPolarFrame = PolarRenderResult;
+
+/** Sharp enough on map; ~half the fill cost of 2048. */
+export const POLAR_GATE_MAX_SIZE = 1536;
+
+export interface OdimScanMeta {
+  lat: number;
+  lon: number;
+  elangle: number;
+  nbins: number;
+  nrays: number;
+  rstart: number;
+  rscale: number;
+  a1gate: number;
+  values: Float32Array | Int16Array | Uint8Array | Uint16Array;
+  nodata: number;
+  undetect: number;
+  gain: number;
+  offset: number;
+}
 
 const DEG = Math.PI / 180;
 
@@ -73,33 +96,115 @@ function level3GateBounds(
   ];
 }
 
-function odimGateBounds(scan: OdimScanMeta): [[number, number], [number, number]] {
-  const { lat, lon, nbins, nrays, rstart, rscale, a1gate, values, nodata, undetect } = scan;
-  const azStep = nrays > 0 ? 360 / nrays : 1;
+/** Full-sweep coverage box (not data extent) — stable overlay bounds. */
+function odimCoverageBounds(scan: OdimScanMeta): [[number, number], [number, number]] {
+  const { lat, lon, nbins, rstart, rscale } = scan;
+  const maxRangeKm = Math.max(1, (rstart + nbins * rscale) / 1000);
   let minLat = lat;
   let maxLat = lat;
   let minLon = lon;
   let maxLon = lon;
 
-  for (let ray = 0; ray < nrays; ray++) {
-    const az = (a1gate + ray * azStep) % 360;
-    for (let bin = 0; bin < nbins; bin++) {
-      const raw = values[ray * nbins + bin];
-      if (raw === nodata || raw === undetect || Number.isNaN(raw)) continue;
-      const rangeKm = (rstart + bin * rscale) / 1000;
-      const pos = destination(lat, lon, az, rangeKm);
-      minLat = Math.min(minLat, pos.lat);
-      maxLat = Math.max(maxLat, pos.lat);
-      minLon = Math.min(minLon, pos.lon);
-      maxLon = Math.max(maxLon, pos.lon);
-    }
+  for (let az = 0; az < 360; az += 3) {
+    const p = destination(lat, lon, az, maxRangeKm);
+    minLat = Math.min(minLat, p.lat);
+    maxLat = Math.max(maxLat, p.lat);
+    minLon = Math.min(minLon, p.lon);
+    maxLon = Math.max(maxLon, p.lon);
   }
 
-  const pad = 0.08;
+  const pad = 0.02;
   return [
     [minLat - pad, minLon - pad],
     [maxLat + pad, maxLon + pad],
   ];
+}
+
+/** Legacy data-extent bounds (geographic renderers). */
+function odimGateBounds(scan: OdimScanMeta): [[number, number], [number, number]] {
+  return odimCoverageBounds(scan);
+}
+
+/** Fill a convex quad into a Uint32 ImageData buffer via scanline edges. */
+function fillConvexQuad(
+  buf: Uint32Array,
+  width: number,
+  height: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  x3: number,
+  y3: number,
+  color: number,
+): void {
+  if ((color >>> 24) === 0) return;
+
+  let minY = Math.floor(Math.min(y0, y1, y2, y3));
+  let maxY = Math.ceil(Math.max(y0, y1, y2, y3));
+  if (maxY < 0 || minY >= height) return;
+  minY = Math.max(0, minY);
+  maxY = Math.min(height - 1, maxY);
+
+  const edgeX = [x0, x1, x2, x3];
+  const edgeY = [y0, y1, y2, y3];
+
+  for (let y = minY; y <= maxY; y++) {
+    let n = 0;
+    const hits = [0, 0, 0, 0];
+    for (let i = 0; i < 4; i++) {
+      const xa = edgeX[i]!;
+      const ya = edgeY[i]!;
+      const xb = edgeX[(i + 1) % 4]!;
+      const yb = edgeY[(i + 1) % 4]!;
+      if ((ya <= y && yb > y) || (yb <= y && ya > y)) {
+        const t = (y - ya) / (yb - ya);
+        hits[n++] = xa + t * (xb - xa);
+      }
+    }
+    if (n < 2) continue;
+    for (let i = 1; i < n; i++) {
+      const v = hits[i]!;
+      let j = i - 1;
+      while (j >= 0 && hits[j]! > v) {
+        hits[j + 1] = hits[j]!;
+        j--;
+      }
+      hits[j + 1] = v;
+    }
+    for (let i = 0; i + 1 < n; i += 2) {
+      let xStart = Math.ceil(hits[i]!);
+      let xEnd = Math.floor(hits[i + 1]!);
+      if (xEnd < 0 || xStart >= width) continue;
+      xStart = Math.max(0, xStart);
+      xEnd = Math.min(width - 1, xEnd);
+      const row = y * width;
+      for (let x = xStart; x <= xEnd; x++) {
+        buf[row + x] = color;
+      }
+    }
+  }
+}
+
+async function canvasToObjectUrl(canvas: HTMLCanvasElement): Promise<{
+  dataUrl: string;
+  isObjectUrl: boolean;
+}> {
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((b) => resolve(b), "image/png");
+  });
+  if (!blob) {
+    return { dataUrl: canvas.toDataURL("image/png"), isObjectUrl: false };
+  }
+  return { dataUrl: URL.createObjectURL(blob), isObjectUrl: true };
+}
+
+export function revokePolarUrl(result: PolarRenderResult | null | undefined): void {
+  if (result?.isObjectUrl && result.dataUrl.startsWith("blob:")) {
+    URL.revokeObjectURL(result.dataUrl);
+  }
 }
 
 function geographicCanvasSize(
@@ -129,19 +234,16 @@ function projectToCanvas(
   return [px, py];
 }
 
-export function renderLevel3PolarGates(
+export async function renderLevel3PolarGates(
   layer: Level3RadialLayer,
   lat: number,
   lon: number,
   stops: ColorStop[],
-  maxSize = 2048,
+  maxSize = POLAR_GATE_MAX_SIZE,
   reflectivity = false,
   fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
-): PolarRenderResult {
-  const sampleColor = reflectivity
-    ? (value: number, s: ColorStop[]) => colorAtReflectivityDbz(value, s, fade)
-    : colorAtDbz;
-
+): Promise<PolarRenderResult> {
+  const lut = stopsToDbzUint32LUT(stops, reflectivity, fade);
   const bounds = level3CoverageBounds(layer, lat, lon);
   const south = bounds[0][0];
   const west = bounds[0][1];
@@ -155,10 +257,15 @@ export function renderLevel3PolarGates(
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return { dataUrl: "", bounds };
 
-  ctx.imageSmoothingEnabled = false;
+  const imageData = ctx.createImageData(width, height);
+  const buf = new Uint32Array(
+    imageData.data.buffer,
+    imageData.data.byteOffset,
+    width * height,
+  );
 
   const project = (gLat: number, gLon: number) =>
     projectToCanvas(gLat, gLon, north, west, latSpan, lonSpan, width, height);
@@ -172,8 +279,8 @@ export function renderLevel3PolarGates(
       const val = radial.bins[b];
       if (val == null) continue;
 
-      const [r, g, bCol, a] = sampleColor(val, stops);
-      if (a === 0) continue;
+      const color = lut[dbzToLutIndex(val)]!;
+      if ((color >>> 24) === 0) continue;
 
       const [r0, r1] = level3BinRangeKm(layer, b);
       if (r1 <= 0) continue;
@@ -188,33 +295,25 @@ export function renderLevel3PolarGates(
       const [x3, y3] = project(p3.lat, p3.lon);
       const [x4, y4] = project(p4.lat, p4.lon);
 
-      ctx.fillStyle = `rgba(${r},${g},${bCol},${(a / 255).toFixed(3)})`;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.lineTo(x3, y3);
-      ctx.lineTo(x4, y4);
-      ctx.closePath();
-      ctx.fill();
+      fillConvexQuad(buf, width, height, x1, y1, x2, y2, x3, y3, x4, y4, color);
     }
   }
 
-  return { dataUrl: canvas.toDataURL("image/png"), bounds };
+  ctx.putImageData(imageData, 0, 0);
+  const encoded = await canvasToObjectUrl(canvas);
+  return { dataUrl: encoded.dataUrl, bounds, isObjectUrl: encoded.isObjectUrl };
 }
 
 /** Render ODIM SCAN as native polar range gates. */
-export function renderOdimPolarGates(
+export async function renderOdimPolarGates(
   scan: OdimScanMeta,
   stops: ColorStop[],
-  maxSize = 2048,
+  maxSize = POLAR_GATE_MAX_SIZE,
   reflectivity = true,
   fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
-): PolarRenderResult {
-  const sampleColor = reflectivity
-    ? (value: number, s: ColorStop[]) => colorAtReflectivityDbz(value, s, fade)
-    : colorAtDbz;
-
-  const bounds = odimGateBounds(scan);
+): Promise<PolarRenderResult> {
+  const lut = stopsToDbzUint32LUT(stops, reflectivity, fade);
+  const bounds = odimCoverageBounds(scan);
   const [[, west], [north, east]] = bounds;
   const latSpan = Math.max(0.01, bounds[1][0] - bounds[0][0]);
   const lonSpan = Math.max(0.01, east - west);
@@ -223,10 +322,15 @@ export function renderOdimPolarGates(
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return { dataUrl: "", bounds };
 
-  ctx.imageSmoothingEnabled = false;
+  const imageData = ctx.createImageData(width, height);
+  const buf = new Uint32Array(
+    imageData.data.buffer,
+    imageData.data.byteOffset,
+    width * height,
+  );
 
   const { lat, lon, nbins, nrays, rstart, rscale, a1gate, values, nodata, undetect, gain, offset } =
     scan;
@@ -244,8 +348,8 @@ export function renderOdimPolarGates(
       if (raw === nodata || raw === undetect || Number.isNaN(raw)) continue;
       const val = raw * gain + offset;
 
-      const [r, g, bCol, a] = sampleColor(val, stops);
-      if (a === 0) continue;
+      const color = lut[dbzToLutIndex(val)]!;
+      if ((color >>> 24) === 0) continue;
 
       const r0 = (rstart + bin * rscale) / 1000;
       const r1 = (rstart + (bin + 1) * rscale) / 1000;
@@ -261,18 +365,13 @@ export function renderOdimPolarGates(
       const [x3, y3] = project(p3.lat, p3.lon);
       const [x4, y4] = project(p4.lat, p4.lon);
 
-      ctx.fillStyle = `rgba(${r},${g},${bCol},${(a / 255).toFixed(3)})`;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.lineTo(x3, y3);
-      ctx.lineTo(x4, y4);
-      ctx.closePath();
-      ctx.fill();
+      fillConvexQuad(buf, width, height, x1, y1, x2, y2, x3, y3, x4, y4, color);
     }
   }
 
-  return { dataUrl: canvas.toDataURL("image/png"), bounds };
+  ctx.putImageData(imageData, 0, 0);
+  const encoded = await canvasToObjectUrl(canvas);
+  return { dataUrl: encoded.dataUrl, bounds, isObjectUrl: encoded.isObjectUrl };
 }
 
 /** Render Level-III to a lat/lon-aligned PNG suitable for Leaflet image overlays. */
@@ -362,7 +461,7 @@ export function renderOdimGeographic(
     const gateLat = north - (py / Math.max(1, height - 1)) * latSpan;
     for (let px = 0; px < width; px++) {
       const gateLon = west + (px / Math.max(1, width - 1)) * lonSpan;
-      const val = sampleOdimRadialInterp(scan, scan.lat, scan.lon, gateLat, gateLon);
+      const val = sampleOdimRadialInterp(scan, gateLat, gateLon);
       const i = (py * width + px) * 4;
       if (val == null) {
         d[i + 3] = 0;
@@ -446,22 +545,6 @@ export function renderLevel3Radial(
   ];
 
   return { dataUrl: canvas.toDataURL("image/png"), bounds };
-}
-
-export interface OdimScanMeta {
-  lat: number;
-  lon: number;
-  elangle: number;
-  nbins: number;
-  nrays: number;
-  rstart: number;
-  rscale: number;
-  a1gate: number;
-  values: Float32Array | Int16Array | Uint8Array | Uint16Array;
-  nodata: number;
-  undetect: number;
-  gain: number;
-  offset: number;
 }
 
 /** Render lowest-tilt ODIM SCAN to PNG. */

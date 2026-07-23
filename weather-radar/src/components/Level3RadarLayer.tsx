@@ -1,8 +1,10 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import type { ColorStop, ReflectivityFadeSettings } from "@/lib/palPalette";
+import { paletteCacheKey } from "@/lib/palPalette";
 import { parseLevel3 } from "@/lib/level3Parse";
 import { level3ObjectUrl, type Level3Frame } from "@/lib/level3Radar";
-import { renderLevel3PolarGates } from "@/lib/renderPolar";
+import { loadPolarFrameCached } from "@/lib/polarFrameCache";
+import { POLAR_GATE_MAX_SIZE, renderLevel3PolarGates } from "@/lib/renderPolar";
 import PolarRadarLayer from "./PolarRadarLayer";
 
 interface Props {
@@ -22,27 +24,38 @@ export default function Level3RadarLayer({
   reflectivity = false,
   reflectivityFade,
 }: Props) {
-  const loadFrame = useCallback(
-    async (frame: Level3Frame & { id: string }) => {
-      const res = await fetch(level3ObjectUrl(frame.key));
-      if (!res.ok) return null;
-      const parsed = await parseLevel3(await res.arrayBuffer());
-      if (!parsed) return null;
-      
-      return renderLevel3PolarGates(
-        parsed.layer,
-        parsed.latitude,
-        parsed.longitude,
-        stops,
-        2048,
-        reflectivity,
-        reflectivityFade,
-      );
-    },
+  const palKey = useMemo(
+    () => paletteCacheKey(stops, reflectivity, reflectivityFade),
     [stops, reflectivity, reflectivityFade],
   );
 
-  const polarFrames = frames.map((f) => ({ ...f, id: f.key }));
+  const loadFrame = useCallback(
+    async (frame: Level3Frame & { id: string }) => {
+      const cacheKey = `l3:${frame.key}:${palKey}`;
+      return loadPolarFrameCached(cacheKey, async () => {
+        const res = await fetch(level3ObjectUrl(frame.key));
+        if (!res.ok) return null;
+        const parsed = await parseLevel3(await res.arrayBuffer());
+        if (!parsed) return null;
+
+        return renderLevel3PolarGates(
+          parsed.layer,
+          parsed.latitude,
+          parsed.longitude,
+          stops,
+          POLAR_GATE_MAX_SIZE,
+          reflectivity,
+          reflectivityFade,
+        );
+      });
+    },
+    [stops, reflectivity, reflectivityFade, palKey],
+  );
+
+  const polarFrames = useMemo(
+    () => frames.map((f) => ({ ...f, id: f.key })),
+    [frames],
+  );
 
   return (
     <PolarRadarLayer

@@ -17,6 +17,8 @@ interface Props<T extends PolarFrame> {
   loadFrame: (frame: T) => Promise<PolarRenderResult | null>;
 }
 
+const PREFETCH_CONCURRENCY = 3;
+
 export default function PolarRadarLayer<T extends PolarFrame>({
   frames,
   frameIndex,
@@ -26,101 +28,172 @@ export default function PolarRadarLayer<T extends PolarFrame>({
 }: Props<T>) {
   const map = useMap();
   const overlaysRef = useRef<Map<string, L.ImageOverlay>>(new Map());
-  const stopsRef = useRef(stops);
   const cacheRef = useRef(new Map<string, PolarRenderResult>());
-  const loadingRef = useRef(new Set<string>());
+  const loadFrameRef = useRef(loadFrame);
+  const framesRef = useRef(frames);
+  const activeIdRef = useRef<string | null>(null);
+  const lastShownIdRef = useRef<string | null>(null);
+  const prefetchGenRef = useRef(0);
   const [cacheRev, bumpCache] = useState(0);
 
-  const activeId = frames[frameIndex]?.id ?? null;
+  loadFrameRef.current = loadFrame;
+  framesRef.current = frames;
 
-  useEffect(() => {
-    stopsRef.current = stops;
+  const activeId = frames[frameIndex]?.id ?? null;
+  activeIdRef.current = activeId;
+
+  const frameScope = frames[0]?.id?.split("_").slice(0, 2).join("_") ?? frames[0]?.id ?? "";
+
+  const clearLocalCache = () => {
     cacheRef.current.clear();
-    loadingRef.current.clear();
     overlaysRef.current.forEach((ov) => ov.remove());
     overlaysRef.current.clear();
+    lastShownIdRef.current = null;
     bumpCache((n) => n + 1);
+  };
+
+  useEffect(() => {
+    clearLocalCache();
   }, [stops]);
 
-  const frameScope = frames[0]?.id?.split("_").slice(0, 2).join("_") ?? "";
-
   useEffect(() => {
-    cacheRef.current.clear();
-    loadingRef.current.clear();
-    overlaysRef.current.forEach((ov) => ov.remove());
-    overlaysRef.current.clear();
-    bumpCache((n) => n + 1);
+    clearLocalCache();
   }, [frameScope]);
 
+  // Prefetch full timeline. Generation token avoids cancel-on-activeId and stuck locks.
   useEffect(() => {
     if (!frames.length) return;
-    let cancelled = false;
+    const gen = ++prefetchGenRef.current;
+    let running = 0;
+    const queue: string[] = [];
+    const queued = new Set<string>();
+    const inFlight = new Set<string>();
 
-    const queueFrame = async (id: string) => {
-      if (cacheRef.current.has(id) || loadingRef.current.has(id)) return;
-      const frame = frames.find((f) => f.id === id);
-      if (!frame) return;
-      
-      loadingRef.current.add(id);
-      
-      try {
-        const result = await loadFrame(frame);
-        if (cancelled || !result) return;
-        
-        const maxCached = 4;
-        if (cacheRef.current.size >= maxCached) {
-          for (const key of [...cacheRef.current.keys()]) {
-            if (key === id) continue;
-            cacheRef.current.delete(key);
-            overlaysRef.current.get(key)?.remove();
-            overlaysRef.current.delete(key);
-            if (cacheRef.current.size < maxCached) break;
-          }
-        }
-        
-        cacheRef.current.set(id, result);
-        bumpCache((n) => n + 1);
-      } catch {
-        // Ignore errors
-      } finally {
-        loadingRef.current.delete(id);
+    const enqueue = (id: string | undefined) => {
+      if (!id || queued.has(id) || cacheRef.current.has(id)) return;
+      queued.add(id);
+      queue.push(id);
+    };
+
+    const pump = () => {
+      if (gen !== prefetchGenRef.current) return;
+      while (running < PREFETCH_CONCURRENCY && queue.length > 0) {
+        const id = queue.shift()!;
+        if (cacheRef.current.has(id) || inFlight.has(id)) continue;
+
+        const frame = framesRef.current.find((f) => f.id === id);
+        if (!frame) continue;
+
+        running++;
+        inFlight.add(id);
+
+        loadFrameRef
+          .current(frame)
+          .then((result) => {
+            if (gen !== prefetchGenRef.current || !result?.dataUrl) return;
+            cacheRef.current.set(id, result);
+            bumpCache((n) => n + 1);
+          })
+          .catch(() => {})
+          .finally(() => {
+            inFlight.delete(id);
+            running--;
+            if (gen !== prefetchGenRef.current) return;
+            const active = activeIdRef.current;
+            if (active && !cacheRef.current.has(active) && !queued.has(active)) {
+              queue.unshift(active);
+              queued.add(active);
+            }
+            pump();
+          });
       }
     };
 
-    // Preload adjacent frames for animation
-    const activeIdx = frames.findIndex((f) => f.id === activeId);
+    const list = frames;
+    const activeIdx = list.findIndex((f) => f.id === activeIdRef.current);
+    const order: number[] = [];
     if (activeIdx >= 0) {
-      const neighbors = [activeIdx, activeIdx + 1, activeIdx - 1];
-      for (const idx of neighbors) {
-        const frame = frames[(idx + frames.length) % frames.length];
-        if (frame) queueFrame(frame.id);
-      }
-    } else if (activeId) {
-      queueFrame(activeId);
+      order.push(activeIdx, activeIdx + 1, activeIdx - 1);
+      for (let i = 0; i < list.length; i++) order.push(i);
+    } else {
+      for (let i = 0; i < list.length; i++) order.push(i);
     }
 
+    const seen = new Set<number>();
+    for (const raw of order) {
+      const idx = ((raw % list.length) + list.length) % list.length;
+      if (seen.has(idx)) continue;
+      seen.add(idx);
+      enqueue(list[idx]?.id);
+    }
+    pump();
+
     return () => {
-      cancelled = true;
+      // Invalidate this generation; in-flight shared-cache work may still complete.
+      if (prefetchGenRef.current === gen) prefetchGenRef.current++;
     };
-  }, [frames, loadFrame, activeId]);
+  }, [frames, loadFrame]);
+
+  // Keep overlay in sync when scrubbing; shared cache makes reloads cheap.
+  useEffect(() => {
+    if (!activeId) return;
+    if (cacheRef.current.has(activeId)) {
+      bumpCache((n) => n + 1);
+      return;
+    }
+    const frame = frames.find((f) => f.id === activeId);
+    if (!frame) return;
+    const gen = prefetchGenRef.current;
+    loadFrameRef
+      .current(frame)
+      .then((result) => {
+        if (gen !== prefetchGenRef.current || !result?.dataUrl) return;
+        cacheRef.current.set(activeId, result);
+        bumpCache((n) => n + 1);
+      })
+      .catch(() => {});
+  }, [activeId, frames]);
 
   useEffect(() => {
+    // Hold last ready frame while active is still loading (no blank flash).
+    const showId =
+      (activeId && cacheRef.current.has(activeId) ? activeId : null) ??
+      (lastShownIdRef.current && cacheRef.current.has(lastShownIdRef.current)
+        ? lastShownIdRef.current
+        : null);
+
     overlaysRef.current.forEach((ov, id) => {
-      ov.setOpacity(id === activeId ? opacity : 0);
+      ov.setOpacity(id === showId ? opacity : 0);
     });
 
-    if (!activeId || !cacheRef.current.has(activeId)) return;
+    if (!showId) return;
 
-    const { dataUrl, bounds } = cacheRef.current.get(activeId)!;
-    let ov = overlaysRef.current.get(activeId);
+    const cached = cacheRef.current.get(showId);
+    if (!cached) return;
+
+    const { dataUrl, bounds } = cached;
+    let ov = overlaysRef.current.get(showId);
     if (!ov) {
-      ov = L.imageOverlay(dataUrl, bounds, { opacity, interactive: false, zIndex: 10 });
+      ov = L.imageOverlay(dataUrl, L.latLngBounds(bounds), {
+        opacity,
+        interactive: false,
+        zIndex: 10,
+      });
       ov.addTo(map);
-      overlaysRef.current.set(activeId, ov);
+      overlaysRef.current.set(showId, ov);
     } else {
-      ov.setUrl(dataUrl);
-      ov.setBounds(bounds);
+      const el = ov.getElement();
+      if (!el || el.getAttribute("src") !== dataUrl) {
+        ov.setUrl(dataUrl);
+      }
+      ov.setBounds(L.latLngBounds(bounds));
       ov.setOpacity(opacity);
+    }
+
+    if (activeId && cacheRef.current.has(activeId)) {
+      lastShownIdRef.current = activeId;
+    } else if (showId) {
+      lastShownIdRef.current = showId;
     }
   }, [activeId, opacity, map, cacheRev]);
 
@@ -128,6 +201,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
     return () => {
       overlaysRef.current.forEach((ov) => ov.remove());
       overlaysRef.current.clear();
+      cacheRef.current.clear();
     };
   }, [map]);
 

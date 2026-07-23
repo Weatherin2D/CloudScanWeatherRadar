@@ -119,9 +119,26 @@ export function barPercentToDbz(
 }
 
 // ── RadarScope band lookup ─────────────────────────────────────────────────────
-export function colorAtDbz(dbz: number, stops: ColorStop[]): [number, number, number, number] {
-  if (!stops.length) return [0, 0, 0, 0];
-  const sorted = [...stops].sort((a, b) => a.dbz - b.dbz);
+
+/** Cache sorted copies so hot paths never re-sort the same stops array. */
+const sortedStopsCache = new WeakMap<ColorStop[], ColorStop[]>();
+
+export function sortedColorStops(stops: ColorStop[]): ColorStop[] {
+  if (!stops.length) return stops;
+  let sorted = sortedStopsCache.get(stops);
+  if (!sorted) {
+    sorted = [...stops].sort((a, b) => a.dbz - b.dbz);
+    sortedStopsCache.set(stops, sorted);
+  }
+  return sorted;
+}
+
+/** Lookup assuming `stops` are already sorted ascending by dBZ. */
+export function colorAtDbzSorted(
+  dbz: number,
+  sorted: ColorStop[],
+): [number, number, number, number] {
+  if (!sorted.length) return [0, 0, 0, 0];
 
   if (dbz < sorted[0].dbz) return [0, 0, 0, 0];
 
@@ -151,20 +168,78 @@ export function colorAtDbz(dbz: number, stops: ColorStop[]): [number, number, nu
   return [r, g, b, last.alpha];
 }
 
+export function colorAtDbz(dbz: number, stops: ColorStop[]): [number, number, number, number] {
+  return colorAtDbzSorted(dbz, sortedColorStops(stops));
+}
+
 /** Reflectivity lookup with configurable low-dBZ opacity ramp. */
+export function colorAtReflectivityDbzSorted(
+  dbz: number,
+  sorted: ColorStop[],
+  fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
+): [number, number, number, number] {
+  if (dbz < fade.startDbz) return [0, 0, 0, 0];
+
+  const lookupDbz =
+    sorted.length > 0 && dbz < sorted[0].dbz ? sorted[0].dbz : dbz;
+  const [r, g, b, a] = colorAtDbzSorted(lookupDbz, sorted);
+  const fadeMul = reflectivityLowDbzFade(dbz, fade);
+  return [r, g, b, Math.round(a * fadeMul)];
+}
+
 export function colorAtReflectivityDbz(
   dbz: number,
   stops: ColorStop[],
   fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
 ): [number, number, number, number] {
-  if (dbz < fade.startDbz) return [0, 0, 0, 0];
+  return colorAtReflectivityDbzSorted(dbz, sortedColorStops(stops), fade);
+}
 
-  const sorted = [...stops].sort((a, b) => a.dbz - b.dbz);
-  const lookupDbz =
-    sorted.length > 0 && dbz < sorted[0].dbz ? sorted[0].dbz : dbz;
-  const [r, g, b, a] = colorAtDbz(lookupDbz, stops);
-  const fadeMul = reflectivityLowDbzFade(dbz, fade);
-  return [r, g, b, Math.round(a * fadeMul)];
+/** Quantized dBZ → packed RGBA (little-endian ABGR as Uint32 for ImageData). */
+export const DBZ_LUT_MIN = -32;
+export const DBZ_LUT_MAX = 95;
+export const DBZ_LUT_STEP = 0.5;
+export const DBZ_LUT_SIZE =
+  Math.round((DBZ_LUT_MAX - DBZ_LUT_MIN) / DBZ_LUT_STEP) + 1;
+
+export function rgbaToUint32(r: number, g: number, b: number, a: number): number {
+  return ((a & 255) << 24) | ((b & 255) << 16) | ((g & 255) << 8) | (r & 255);
+}
+
+export function dbzToLutIndex(dbz: number): number {
+  const idx = Math.round((dbz - DBZ_LUT_MIN) / DBZ_LUT_STEP);
+  return Math.max(0, Math.min(DBZ_LUT_SIZE - 1, idx));
+}
+
+/** Precompute dBZ→Uint32 colors for polar gate rasterization. */
+export function stopsToDbzUint32LUT(
+  stops: ColorStop[],
+  reflectivity = false,
+  fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
+): Uint32Array {
+  const sorted = sortedColorStops(stops);
+  const lut = new Uint32Array(DBZ_LUT_SIZE);
+  for (let i = 0; i < DBZ_LUT_SIZE; i++) {
+    const dbz = DBZ_LUT_MIN + i * DBZ_LUT_STEP;
+    const [r, g, b, a] = reflectivity
+      ? colorAtReflectivityDbzSorted(dbz, sorted, fade)
+      : colorAtDbzSorted(dbz, sorted);
+    lut[i] = rgbaToUint32(r, g, b, a);
+  }
+  return lut;
+}
+
+/** Stable signature for palette + fade (frame cache keys). */
+export function paletteCacheKey(
+  stops: ColorStop[],
+  reflectivity: boolean,
+  fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
+): string {
+  const sorted = sortedColorStops(stops);
+  const stopPart = sorted
+    .map((s) => `${s.dbz}:${s.color}:${s.alpha}:${s.solid ? 1 : 0}`)
+    .join("|");
+  return `${reflectivity ? 1 : 0}:${fade.startDbz}:${fade.endDbz}:${stopPart}`;
 }
 
 /** RainViewer scheme-0: dBZ encoded in red channel. */

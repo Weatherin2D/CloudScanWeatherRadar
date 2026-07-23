@@ -1,8 +1,10 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import type { RadarStation } from "@/data/stations";
 import type { ColorStop, ReflectivityFadeSettings } from "@/lib/palPalette";
+import { paletteCacheKey } from "@/lib/palPalette";
 import { loadOdimScan, type OperaFrame } from "@/lib/operaRadar";
-import { renderOdimPolarGates } from "@/lib/renderPolar";
+import { loadPolarFrameCached } from "@/lib/polarFrameCache";
+import { POLAR_GATE_MAX_SIZE, renderOdimPolarGates } from "@/lib/renderPolar";
 import PolarRadarLayer from "./PolarRadarLayer";
 
 interface Props {
@@ -24,20 +26,37 @@ export default function OperaRadarLayer({
   reflectivity = true,
   reflectivityFade,
 }: Props) {
-  const loadFrame = useCallback(
-    async (frame: OperaFrame & { id: string }) => {
-      try {
-        const scan = await loadOdimScan(frame.odimUrl, station.lat, station.lon);
-        if (!scan) return null;
-        return renderOdimPolarGates(scan, stops, 2048, reflectivity, reflectivityFade);
-      } catch {
-        return null;
-      }
-    },
-    [station.lat, station.lon, stops, reflectivity, reflectivityFade],
+  const palKey = useMemo(
+    () => paletteCacheKey(stops, reflectivity, reflectivityFade),
+    [stops, reflectivity, reflectivityFade],
   );
 
-  const polarFrames = frames.map((f) => ({ ...f, id: f.odimUrl }));
+  const loadFrame = useCallback(
+    async (frame: OperaFrame & { id: string }) => {
+      const cacheKey = `opera:${frame.odimUrl}:${station.lat}:${station.lon}:${palKey}`;
+      return loadPolarFrameCached(cacheKey, async () => {
+        try {
+          const scan = await loadOdimScan(frame.odimUrl, station.lat, station.lon);
+          if (!scan) return null;
+          return renderOdimPolarGates(
+            scan,
+            stops,
+            POLAR_GATE_MAX_SIZE,
+            reflectivity,
+            reflectivityFade,
+          );
+        } catch {
+          return null;
+        }
+      });
+    },
+    [station.lat, station.lon, stops, reflectivity, reflectivityFade, palKey],
+  );
+
+  const polarFrames = useMemo(
+    () => frames.map((f) => ({ ...f, id: f.odimUrl })),
+    [frames],
+  );
 
   return (
     <PolarRadarLayer

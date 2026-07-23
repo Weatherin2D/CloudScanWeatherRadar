@@ -170,10 +170,9 @@
   image-rendering: -moz-crisp-edges;
 }
 
-/* Geographic polar ImageOverlays — crisp gates when zoomed, no bilinear smear */
+/* Geographic polar ImageOverlays — bilinear when scaled; avoids magnifying single-pixel gaps into streaks */
 .leaflet-image-layer.radar-polar-overlay {
-  image-rendering: crisp-edges;
-  image-rendering: pixelated;
+  image-rendering: auto;
 }
 
 .radar-polar-canvas {

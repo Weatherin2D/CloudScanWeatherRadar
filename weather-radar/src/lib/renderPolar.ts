@@ -10,9 +10,9 @@ import {
 import type { Level3RadialLayer } from "./level3Parse";
 import {
   level3BinCount,
-  level3BinRangeKm,
   level3CoverageBounds,
   level3MaxRangeKm,
+  level3RangeScaleKm,
   radialAzimuthSpan,
 } from "./level3Geometry";
 import {
@@ -37,9 +37,9 @@ export const POLAR_GATE_PREVIEW_SIZE = 1024;
 
 /**
  * Study-quality geographic raster for ImageOverlay.
- * Painted in lat/lon space so Leaflet stretch matches the pixels (no streak warp).
+ * Pixel-sampled in lat/lon space (no wedge-fill gaps / streak artifacts).
  */
-export const POLAR_GATE_STUDY_SIZE = 2560;
+export const POLAR_GATE_STUDY_SIZE = 3072;
 
 /** @deprecated Prefer PREVIEW / STUDY sizes. */
 export const POLAR_GATE_MAX_SIZE = POLAR_GATE_STUDY_SIZE;
@@ -137,69 +137,6 @@ function odimGateBounds(scan: OdimScanMeta): [[number, number], [number, number]
   return odimCoverageBounds(scan);
 }
 
-/** Fill a convex quad into a Uint32 ImageData buffer via scanline edges. */
-function fillConvexQuad(
-  buf: Uint32Array,
-  width: number,
-  height: number,
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-  x3: number,
-  y3: number,
-  color: number,
-): void {
-  if ((color >>> 24) === 0) return;
-
-  let minY = Math.floor(Math.min(y0, y1, y2, y3));
-  let maxY = Math.ceil(Math.max(y0, y1, y2, y3));
-  if (maxY < 0 || minY >= height) return;
-  minY = Math.max(0, minY);
-  maxY = Math.min(height - 1, maxY);
-
-  const edgeX = [x0, x1, x2, x3];
-  const edgeY = [y0, y1, y2, y3];
-
-  for (let y = minY; y <= maxY; y++) {
-    let n = 0;
-    const hits = [0, 0, 0, 0];
-    for (let i = 0; i < 4; i++) {
-      const xa = edgeX[i]!;
-      const ya = edgeY[i]!;
-      const xb = edgeX[(i + 1) % 4]!;
-      const yb = edgeY[(i + 1) % 4]!;
-      if ((ya <= y && yb > y) || (yb <= y && ya > y)) {
-        const t = (y - ya) / (yb - ya);
-        hits[n++] = xa + t * (xb - xa);
-      }
-    }
-    if (n < 2) continue;
-    for (let i = 1; i < n; i++) {
-      const v = hits[i]!;
-      let j = i - 1;
-      while (j >= 0 && hits[j]! > v) {
-        hits[j + 1] = hits[j]!;
-        j--;
-      }
-      hits[j + 1] = v;
-    }
-    for (let i = 0; i + 1 < n; i += 2) {
-      let xStart = Math.ceil(hits[i]!);
-      let xEnd = Math.floor(hits[i + 1]!);
-      if (xEnd < 0 || xStart >= width) continue;
-      xStart = Math.max(0, xStart);
-      xEnd = Math.min(width - 1, xEnd);
-      const row = y * width;
-      for (let x = xStart; x <= xEnd; x++) {
-        buf[row + x] = color;
-      }
-    }
-  }
-}
-
 async function canvasToObjectUrl(canvas: HTMLCanvasElement): Promise<{
   dataUrl: string;
   isObjectUrl: boolean;
@@ -232,21 +169,45 @@ function geographicCanvasSize(
   return { width, height };
 }
 
-function projectToCanvas(
-  gateLat: number,
-  gateLon: number,
-  north: number,
-  west: number,
-  latSpan: number,
-  lonSpan: number,
-  width: number,
-  height: number,
-): [number, number] {
-  const px = ((gateLon - west) / lonSpan) * (width - 1);
-  const py = ((north - gateLat) / latSpan) * (height - 1);
-  return [px, py];
+/** 0.05° azimuth buckets → radial/ray index. Gap-free coverage by construction. */
+const AZ_LUT_RES = 0.05;
+const AZ_LUT_LEN = Math.round(360 / AZ_LUT_RES);
+
+function fillAzimuthLutSpan(lut: Int32Array, az0: number, az1: number, index: number): void {
+  let a0 = ((az0 % 360) + 360) % 360;
+  let a1 = ((az1 % 360) + 360) % 360;
+  let span = a1 - a0;
+  if (span <= 0) span += 360;
+  if (span > 20) span = 20; // guard corrupt deltas
+  const steps = Math.max(1, Math.ceil(span / AZ_LUT_RES) + 1);
+  for (let s = 0; s <= steps; s++) {
+    const az = (a0 + (span * s) / steps) % 360;
+    const bucket = Math.min(AZ_LUT_LEN - 1, Math.floor(az / AZ_LUT_RES));
+    lut[bucket] = index;
+  }
 }
 
+function buildLevel3AzimuthLut(layer: Level3RadialLayer): Int32Array {
+  const lut = new Int32Array(AZ_LUT_LEN).fill(-1);
+  for (let ri = 0; ri < layer.radials.length; ri++) {
+    const radial = layer.radials[ri]!;
+    const [az0, az1] = radialAzimuthSpan(radial, ri, layer);
+    fillAzimuthLutSpan(lut, az0, az1, ri);
+  }
+  // Fill any leftover buckets from nearest written neighbor (wrap-aware).
+  let last = -1;
+  for (let i = 0; i < AZ_LUT_LEN * 2; i++) {
+    const idx = i % AZ_LUT_LEN;
+    if (lut[idx]! >= 0) last = lut[idx]!;
+    else if (last >= 0) lut[idx] = last;
+  }
+  return lut;
+}
+
+/**
+ * Paint Level-III by sampling every geographic pixel → polar gate.
+ * Avoids Canvas2D wedge-fill hairlines that become long streaks when zoomed.
+ */
 export async function renderLevel3PolarGates(
   layer: Level3RadialLayer,
   lat: number,
@@ -256,7 +217,7 @@ export async function renderLevel3PolarGates(
   reflectivity = false,
   fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
 ): Promise<PolarRenderResult> {
-  const lut = stopsToDbzUint32LUT(stops, reflectivity, fade);
+  const colorLut = stopsToDbzUint32LUT(stops, reflectivity, fade);
   const bounds = level3CoverageBounds(layer, lat, lon);
   const maxRangeKm = level3MaxRangeKm(layer);
   if (maxRangeKm <= 0) return { dataUrl: "", bounds };
@@ -277,65 +238,57 @@ export async function renderLevel3PolarGates(
   const ctx = canvas.getContext("2d");
   if (!ctx) return { dataUrl: "", bounds };
 
-  ctx.clearRect(0, 0, width, height);
-  ctx.imageSmoothingEnabled = false;
+  const imageData = ctx.createImageData(width, height);
+  const buf = new Uint32Array(
+    imageData.data.buffer,
+    imageData.data.byteOffset,
+    width * height,
+  );
 
+  const azLut = buildLevel3AzimuthLut(layer);
+  const scale = level3RangeScaleKm(layer);
   const binLimit = level3BinCount(layer);
-  const project = (gLat: number, gLon: number) =>
-    projectToCanvas(gLat, gLon, north, west, latSpan, lonSpan, width, height);
+  const firstBin = layer.firstBin ?? 0;
+  const invLat = 1 / Math.max(1, height - 1);
+  const invLon = 1 / Math.max(1, width - 1);
+  // Equirectangular km offsets matching ImageOverlay's linear lat/lon stretch.
+  const kmPerDegLat = 111.32;
+  const kmPerDegLon = 111.32 * Math.max(0.2, Math.cos(lat * DEG));
+  const yieldEvery = quality === "study" ? 48 : 96;
 
-  // Slight azimuth overlap closes hairline gaps between radials
-  const AZ_OVERLAP = 0.08;
+  for (let py = 0; py < height; py++) {
+    if (py > 0 && py % yieldEvery === 0) await Promise.resolve();
+    const gateLat = north - py * invLat * latSpan;
+    const dLatKm = (gateLat - lat) * kmPerDegLat;
+    const row = py * width;
 
-  for (let ri = 0; ri < layer.radials.length; ri++) {
-    if (quality === "study" && ri > 0 && ri % 32 === 0) {
-      await Promise.resolve();
-    }
-    const radial = layer.radials[ri]!;
-    let [az0, az1] = radialAzimuthSpan(radial, ri, layer);
-    az0 -= AZ_OVERLAP;
-    az1 += AZ_OVERLAP;
-    const binsInRadial = Math.min(radial.bins.length, binLimit);
+    for (let px = 0; px < width; px++) {
+      const gateLon = west + px * invLon * lonSpan;
+      const dLonKm = (gateLon - lon) * kmPerDegLon;
+      const rangeKm = Math.hypot(dLatKm, dLonKm);
+      if (rangeKm > maxRangeKm || rangeKm < 0.01) continue;
 
-    for (let b = binsInRadial - 1; b >= 0; b--) {
-      const val = radial.bins[b];
+      // Meteorological azimuth: 0 = north, clockwise
+      const az = ((Math.atan2(dLonKm, dLatKm) * 180) / Math.PI + 360) % 360;
+      const ri = azLut[Math.min(AZ_LUT_LEN - 1, (az / AZ_LUT_RES) | 0)]!;
+      if (ri < 0) continue;
+
+      const radial = layer.radials[ri];
+      if (!radial) continue;
+
+      // Gate intervals are [b, b+1); floor avoids outer-ring holes from round().
+      const bin = Math.floor(rangeKm / scale - firstBin);
+      if (bin < 0 || bin >= binLimit) continue;
+      const val = radial.bins[bin];
       if (val == null) continue;
 
-      const packed = lut[dbzToLutIndex(val)]!;
-      const a = (packed >>> 24) & 255;
-      if (a === 0) continue;
-      const r = packed & 255;
-      const g = (packed >>> 8) & 255;
-      const bl = (packed >>> 16) & 255;
-
-      const [r0, r1] = level3BinRangeKm(layer, b);
-      if (r1 <= 0 || r0 >= maxRangeKm) continue;
-      const outer = Math.min(r1, maxRangeKm);
-      // Tiny range overlap prevents concentric hairline rings
-      const inner = Math.max(0, r0 - 0.02);
-      if (outer <= inner) continue;
-
-      const p1 = destination(lat, lon, az0, inner);
-      const p2 = destination(lat, lon, az1, inner);
-      const p3 = destination(lat, lon, az1, outer);
-      const p4 = destination(lat, lon, az0, outer);
-
-      const [x1, y1] = project(p1.lat, p1.lon);
-      const [x2, y2] = project(p2.lat, p2.lon);
-      const [x3, y3] = project(p3.lat, p3.lon);
-      const [x4, y4] = project(p4.lat, p4.lon);
-
-      ctx.fillStyle = `rgba(${r},${g},${bl},${(a / 255).toFixed(3)})`;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.lineTo(x3, y3);
-      ctx.lineTo(x4, y4);
-      ctx.closePath();
-      ctx.fill();
+      const color = colorLut[dbzToLutIndex(val)]!;
+      if ((color >>> 24) === 0) continue;
+      buf[row + px] = color;
     }
   }
 
+  ctx.putImageData(imageData, 0, 0);
   const encoded = await canvasToObjectUrl(canvas);
   return {
     dataUrl: encoded.dataUrl,
@@ -345,7 +298,7 @@ export async function renderLevel3PolarGates(
   };
 }
 
-/** Render ODIM SCAN as native polar range gates in geographic ImageOverlay space. */
+/** Render ODIM SCAN via geographic pixel→polar sampling (gap-free). */
 export async function renderOdimPolarGates(
   scan: OdimScanMeta,
   stops: ColorStop[],
@@ -353,11 +306,12 @@ export async function renderOdimPolarGates(
   reflectivity = true,
   fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
 ): Promise<PolarRenderResult> {
-  const lut = stopsToDbzUint32LUT(stops, reflectivity, fade);
+  const colorLut = stopsToDbzUint32LUT(stops, reflectivity, fade);
   const bounds = odimCoverageBounds(scan);
   const { lat, lon, nbins, nrays, rstart, rscale, a1gate, values, nodata, undetect, gain, offset } =
     scan;
   const maxRangeKm = Math.max(1, (rstart + nbins * rscale) / 1000);
+  if (nrays <= 0 || nbins <= 0) return { dataUrl: "", bounds };
 
   const south = bounds[0][0];
   const west = bounds[0][1];
@@ -375,62 +329,51 @@ export async function renderOdimPolarGates(
   const ctx = canvas.getContext("2d");
   if (!ctx) return { dataUrl: "", bounds };
 
-  ctx.clearRect(0, 0, width, height);
-  ctx.imageSmoothingEnabled = false;
+  const imageData = ctx.createImageData(width, height);
+  const buf = new Uint32Array(
+    imageData.data.buffer,
+    imageData.data.byteOffset,
+    width * height,
+  );
 
-  const azStep = nrays > 0 ? 360 / nrays : 1;
-  const AZ_OVERLAP = azStep * 0.08;
-  const project = (gLat: number, gLon: number) =>
-    projectToCanvas(gLat, gLon, north, west, latSpan, lonSpan, width, height);
+  const azStep = 360 / nrays;
+  const invAzStep = 1 / azStep;
+  const invLat = 1 / Math.max(1, height - 1);
+  const invLon = 1 / Math.max(1, width - 1);
+  const kmPerDegLat = 111.32;
+  const kmPerDegLon = 111.32 * Math.max(0.2, Math.cos(lat * DEG));
+  const rstartKm = rstart / 1000;
+  const rscaleKm = rscale / 1000;
+  const yieldEvery = quality === "study" ? 48 : 96;
 
-  for (let ray = 0; ray < nrays; ray++) {
-    if (quality === "study" && ray > 0 && ray % 32 === 0) {
-      await Promise.resolve();
-    }
-    const az = (a1gate + ray * azStep) % 360;
-    const az0 = az - azStep / 2 - AZ_OVERLAP;
-    const az1 = az + azStep / 2 + AZ_OVERLAP;
+  for (let py = 0; py < height; py++) {
+    if (py > 0 && py % yieldEvery === 0) await Promise.resolve();
+    const gateLat = north - py * invLat * latSpan;
+    const dLatKm = (gateLat - lat) * kmPerDegLat;
+    const row = py * width;
 
-    for (let bin = nbins - 1; bin >= 0; bin--) {
+    for (let px = 0; px < width; px++) {
+      const gateLon = west + px * invLon * lonSpan;
+      const dLonKm = (gateLon - lon) * kmPerDegLon;
+      const rangeKm = Math.hypot(dLatKm, dLonKm);
+      if (rangeKm > maxRangeKm || rangeKm < 0.01) continue;
+
+      const az = ((Math.atan2(dLonKm, dLatKm) * 180) / Math.PI + 360) % 360;
+      const ray =
+        Math.floor((((az - a1gate + 360) % 360) * invAzStep)) % nrays;
+      const bin = Math.floor((rangeKm - rstartKm) / rscaleKm);
+      if (bin < 0 || bin >= nbins) continue;
+
       const raw = values[ray * nbins + bin];
       if (raw === nodata || raw === undetect || Number.isNaN(raw)) continue;
       const val = raw * gain + offset;
-
-      const packed = lut[dbzToLutIndex(val)]!;
-      const a = (packed >>> 24) & 255;
-      if (a === 0) continue;
-      const r = packed & 255;
-      const g = (packed >>> 8) & 255;
-      const bl = (packed >>> 16) & 255;
-
-      const r0 = (rstart + bin * rscale) / 1000;
-      const r1 = (rstart + (bin + 1) * rscale) / 1000;
-      if (r1 <= 0 || r0 >= maxRangeKm) continue;
-      const outer = Math.min(r1, maxRangeKm);
-      const inner = Math.max(0, r0 - 0.02);
-      if (outer <= inner) continue;
-
-      const p1 = destination(lat, lon, az0, inner);
-      const p2 = destination(lat, lon, az1, inner);
-      const p3 = destination(lat, lon, az1, outer);
-      const p4 = destination(lat, lon, az0, outer);
-
-      const [x1, y1] = project(p1.lat, p1.lon);
-      const [x2, y2] = project(p2.lat, p2.lon);
-      const [x3, y3] = project(p3.lat, p3.lon);
-      const [x4, y4] = project(p4.lat, p4.lon);
-
-      ctx.fillStyle = `rgba(${r},${g},${bl},${(a / 255).toFixed(3)})`;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.lineTo(x3, y3);
-      ctx.lineTo(x4, y4);
-      ctx.closePath();
-      ctx.fill();
+      const color = colorLut[dbzToLutIndex(val)]!;
+      if ((color >>> 24) === 0) continue;
+      buf[row + px] = color;
     }
   }
 
+  ctx.putImageData(imageData, 0, 0);
   const encoded = await canvasToObjectUrl(canvas);
   return {
     dataUrl: encoded.dataUrl,

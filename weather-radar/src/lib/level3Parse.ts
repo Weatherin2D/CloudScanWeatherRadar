@@ -1,4 +1,5 @@
 import { Buffer } from "buffer";
+import { applyProductRangeScale } from "./level3Geometry";
 
 type NexradParser = (
   file: Buffer,
@@ -27,6 +28,8 @@ export interface Level3RadialLayer {
   numberBins: number;
   rangeScale: number;
   firstBin: number;
+  /** Level-III product code when known (used for gate resolution / max range). */
+  productCode?: number;
   radials: {
     startAngle: number;
     angleDelta: number;
@@ -43,6 +46,7 @@ export interface Level3Parsed {
   latitude: number;
   longitude: number;
   elevationAngle: number;
+  productCode?: number;
   layer: Level3RadialLayer;
 }
 
@@ -105,6 +109,9 @@ export async function parseLevel3(buffer: ArrayBuffer): Promise<Level3Parsed | n
   if (!layer) return null;
 
   const productCode = data.productDescription?.code;
+  layer.productCode = productCode;
+  applyProductRangeScale(layer, productCode);
+
   if (productCode != null && DIGITAL_DUAL_POL_CODES.has(productCode)) {
     maskDigitalDualPol(layer);
   }
@@ -113,6 +120,7 @@ export async function parseLevel3(buffer: ArrayBuffer): Promise<Level3Parsed | n
     latitude: data.productDescription?.latitude ?? 0,
     longitude: data.productDescription?.longitude ?? 0,
     elevationAngle: data.productDescription?.elevationAngle ?? 0,
+    productCode,
     layer,
   };
 }

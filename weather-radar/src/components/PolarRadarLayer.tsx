@@ -17,7 +17,7 @@ interface Props<T extends PolarFrame> {
   loadFrame: (frame: T) => Promise<PolarRenderResult | null>;
 }
 
-const PREFETCH_CONCURRENCY = 3;
+const PREFETCH_AFTER_FIRST = 2;
 
 export default function PolarRadarLayer<T extends PolarFrame>({
   frames,
@@ -60,11 +60,13 @@ export default function PolarRadarLayer<T extends PolarFrame>({
     clearLocalCache();
   }, [frameScope]);
 
-  // Prefetch full timeline. Generation token avoids cancel-on-activeId and stuck locks.
+  // Active-first: concurrency 1 until first frame paints, then warm neighbors.
   useEffect(() => {
     if (!frames.length) return;
     const gen = ++prefetchGenRef.current;
     let running = 0;
+    let firstReady = false;
+    let concurrency = 1;
     const queue: string[] = [];
     const queued = new Set<string>();
     const inFlight = new Set<string>();
@@ -75,9 +77,29 @@ export default function PolarRadarLayer<T extends PolarFrame>({
       queue.push(id);
     };
 
+    const enqueueBackground = () => {
+      const list = framesRef.current;
+      if (!list.length) return;
+      const activeIdx = list.findIndex((f) => f.id === activeIdRef.current);
+      const order: number[] = [];
+      if (activeIdx >= 0) {
+        order.push(activeIdx + 1, activeIdx - 1);
+        for (let i = 0; i < list.length; i++) order.push(i);
+      } else {
+        for (let i = 0; i < list.length; i++) order.push(i);
+      }
+      const seen = new Set<number>();
+      for (const raw of order) {
+        const idx = ((raw % list.length) + list.length) % list.length;
+        if (seen.has(idx)) continue;
+        seen.add(idx);
+        enqueue(list[idx]?.id);
+      }
+    };
+
     const pump = () => {
       if (gen !== prefetchGenRef.current) return;
-      while (running < PREFETCH_CONCURRENCY && queue.length > 0) {
+      while (running < concurrency && queue.length > 0) {
         const id = queue.shift()!;
         if (cacheRef.current.has(id) || inFlight.has(id)) continue;
 
@@ -93,6 +115,12 @@ export default function PolarRadarLayer<T extends PolarFrame>({
             if (gen !== prefetchGenRef.current || !result?.dataUrl) return;
             cacheRef.current.set(id, result);
             bumpCache((n) => n + 1);
+
+            if (!firstReady && id === activeIdRef.current) {
+              firstReady = true;
+              concurrency = PREFETCH_AFTER_FIRST;
+              enqueueBackground();
+            }
           })
           .catch(() => {})
           .finally(() => {
@@ -104,32 +132,29 @@ export default function PolarRadarLayer<T extends PolarFrame>({
               queue.unshift(active);
               queued.add(active);
             }
+            // If active was already cached from shared store, still open background
+            if (!firstReady && active && cacheRef.current.has(active)) {
+              firstReady = true;
+              concurrency = PREFETCH_AFTER_FIRST;
+              enqueueBackground();
+            }
             pump();
           });
       }
     };
 
-    const list = frames;
-    const activeIdx = list.findIndex((f) => f.id === activeIdRef.current);
-    const order: number[] = [];
-    if (activeIdx >= 0) {
-      order.push(activeIdx, activeIdx + 1, activeIdx - 1);
-      for (let i = 0; i < list.length; i++) order.push(i);
-    } else {
-      for (let i = 0; i < list.length; i++) order.push(i);
-    }
-
-    const seen = new Set<number>();
-    for (const raw of order) {
-      const idx = ((raw % list.length) + list.length) % list.length;
-      if (seen.has(idx)) continue;
-      seen.add(idx);
-      enqueue(list[idx]?.id);
+    // Only the active frame until it lands.
+    enqueue(activeIdRef.current ?? frames[frames.length - 1]?.id);
+    // Shared cache may already have it
+    const active = activeIdRef.current;
+    if (active && cacheRef.current.has(active)) {
+      firstReady = true;
+      concurrency = PREFETCH_AFTER_FIRST;
+      enqueueBackground();
     }
     pump();
 
     return () => {
-      // Invalidate this generation; in-flight shared-cache work may still complete.
       if (prefetchGenRef.current === gen) prefetchGenRef.current++;
     };
   }, [frames, loadFrame]);

@@ -33,7 +33,7 @@ export default function OperaRadarLayer({
 
   const loadFrame = useCallback(
     async (frame: OperaFrame & { id: string }) => {
-      const cacheKey = `opera:${frame.odimUrl}:${station.lat}:${station.lon}:${palKey}`;
+      const cacheKey = `opera:g2:${frame.odimUrl}:${station.lat}:${station.lon}:${palKey}`;
       return loadPolarFrameCached(cacheKey, async () => {
         try {
           const scan = await loadOdimScan(frame.odimUrl, station.lat, station.lon);

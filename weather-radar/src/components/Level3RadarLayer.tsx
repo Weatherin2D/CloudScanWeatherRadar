@@ -31,7 +31,7 @@ export default function Level3RadarLayer({
 
   const loadFrame = useCallback(
     async (frame: Level3Frame & { id: string }) => {
-      const cacheKey = `l3:${frame.key}:${palKey}`;
+      const cacheKey = `l3:g2:${frame.key}:${palKey}`;
       return loadPolarFrameCached(cacheKey, async () => {
         const res = await fetch(level3ObjectUrl(frame.key));
         if (!res.ok) return null;

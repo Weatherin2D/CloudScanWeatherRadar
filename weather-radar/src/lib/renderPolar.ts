@@ -12,6 +12,7 @@ import {
   level3BinCount,
   level3BinRangeKm,
   level3CoverageBounds,
+  level3MaxRangeKm,
   radialAzimuthSpan,
 } from "./level3Geometry";
 import {
@@ -29,8 +30,8 @@ export interface PolarRenderResult {
 
 export type GeographicPolarFrame = PolarRenderResult;
 
-/** Sharp enough on map; ~half the fill cost of 2048. */
-export const POLAR_GATE_MAX_SIZE = 1536;
+/** Polar-space raster size — sharp on map, cheap enough for first paint. */
+export const POLAR_GATE_MAX_SIZE = 1024;
 
 export interface OdimScanMeta {
   lat: number;
@@ -236,39 +237,42 @@ function projectToCanvas(
 
 export async function renderLevel3PolarGates(
   layer: Level3RadialLayer,
-  lat: number,
-  lon: number,
+  _lat: number,
+  _lon: number,
   stops: ColorStop[],
   maxSize = POLAR_GATE_MAX_SIZE,
   reflectivity = false,
   fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
 ): Promise<PolarRenderResult> {
   const lut = stopsToDbzUint32LUT(stops, reflectivity, fade);
-  const bounds = level3CoverageBounds(layer, lat, lon);
-  const south = bounds[0][0];
-  const west = bounds[0][1];
-  const north = bounds[1][0];
-  const east = bounds[1][1];
-  const latSpan = Math.max(0.01, north - south);
-  const lonSpan = Math.max(0.01, east - west);
-  const { width, height } = geographicCanvasSize(lat, latSpan, lonSpan, maxSize);
-  const binLimit = level3BinCount(layer);
+  const bounds = level3CoverageBounds(layer, _lat, _lon);
+  const maxRangeKm = level3MaxRangeKm(layer);
+  if (maxRangeKm <= 0) return { dataUrl: "", bounds };
 
+  const size = Math.max(256, Math.min(maxSize, POLAR_GATE_MAX_SIZE));
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
   if (!ctx) return { dataUrl: "", bounds };
 
-  const imageData = ctx.createImageData(width, height);
+  const imageData = ctx.createImageData(size, size);
   const buf = new Uint32Array(
     imageData.data.buffer,
     imageData.data.byteOffset,
-    width * height,
+    size * size,
   );
 
-  const project = (gLat: number, gLon: number) =>
-    projectToCanvas(gLat, gLon, north, west, latSpan, lonSpan, width, height);
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+  const pxPerKm = (size / 2 - 2) / maxRangeKm;
+  const binLimit = level3BinCount(layer);
+
+  const polarXY = (azDeg: number, rangeKm: number): [number, number] => {
+    const rad = azDeg * DEG;
+    const d = rangeKm * pxPerKm;
+    return [cx + Math.sin(rad) * d, cy - Math.cos(rad) * d];
+  };
 
   for (let ri = 0; ri < layer.radials.length; ri++) {
     const radial = layer.radials[ri]!;
@@ -283,19 +287,16 @@ export async function renderLevel3PolarGates(
       if ((color >>> 24) === 0) continue;
 
       const [r0, r1] = level3BinRangeKm(layer, b);
-      if (r1 <= 0) continue;
+      if (r1 <= 0 || r0 >= maxRangeKm) continue;
+      const outer = Math.min(r1, maxRangeKm);
+      if (outer <= r0) continue;
 
-      const p1 = destination(lat, lon, az0, r0);
-      const p2 = destination(lat, lon, az1, r0);
-      const p3 = destination(lat, lon, az1, r1);
-      const p4 = destination(lat, lon, az0, r1);
+      const [x1, y1] = polarXY(az0, r0);
+      const [x2, y2] = polarXY(az1, r0);
+      const [x3, y3] = polarXY(az1, outer);
+      const [x4, y4] = polarXY(az0, outer);
 
-      const [x1, y1] = project(p1.lat, p1.lon);
-      const [x2, y2] = project(p2.lat, p2.lon);
-      const [x3, y3] = project(p3.lat, p3.lon);
-      const [x4, y4] = project(p4.lat, p4.lon);
-
-      fillConvexQuad(buf, width, height, x1, y1, x2, y2, x3, y3, x4, y4, color);
+      fillConvexQuad(buf, size, size, x1, y1, x2, y2, x3, y3, x4, y4, color);
     }
   }
 
@@ -314,29 +315,34 @@ export async function renderOdimPolarGates(
 ): Promise<PolarRenderResult> {
   const lut = stopsToDbzUint32LUT(stops, reflectivity, fade);
   const bounds = odimCoverageBounds(scan);
-  const [[, west], [north, east]] = bounds;
-  const latSpan = Math.max(0.01, bounds[1][0] - bounds[0][0]);
-  const lonSpan = Math.max(0.01, east - west);
-  const { width, height } = geographicCanvasSize(scan.lat, latSpan, lonSpan, maxSize);
+  const { nbins, nrays, rstart, rscale, a1gate, values, nodata, undetect, gain, offset } =
+    scan;
+  const maxRangeKm = Math.max(1, (rstart + nbins * rscale) / 1000);
 
+  const size = Math.max(256, Math.min(maxSize, POLAR_GATE_MAX_SIZE));
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
   if (!ctx) return { dataUrl: "", bounds };
 
-  const imageData = ctx.createImageData(width, height);
+  const imageData = ctx.createImageData(size, size);
   const buf = new Uint32Array(
     imageData.data.buffer,
     imageData.data.byteOffset,
-    width * height,
+    size * size,
   );
 
-  const { lat, lon, nbins, nrays, rstart, rscale, a1gate, values, nodata, undetect, gain, offset } =
-    scan;
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+  const pxPerKm = (size / 2 - 2) / maxRangeKm;
   const azStep = nrays > 0 ? 360 / nrays : 1;
-  const project = (gLat: number, gLon: number) =>
-    projectToCanvas(gLat, gLon, north, west, latSpan, lonSpan, width, height);
+
+  const polarXY = (azDeg: number, rangeKm: number): [number, number] => {
+    const rad = azDeg * DEG;
+    const d = rangeKm * pxPerKm;
+    return [cx + Math.sin(rad) * d, cy - Math.cos(rad) * d];
+  };
 
   for (let ray = 0; ray < nrays; ray++) {
     const az = (a1gate + ray * azStep) % 360;
@@ -353,19 +359,16 @@ export async function renderOdimPolarGates(
 
       const r0 = (rstart + bin * rscale) / 1000;
       const r1 = (rstart + (bin + 1) * rscale) / 1000;
-      if (r1 <= 0) continue;
+      if (r1 <= 0 || r0 >= maxRangeKm) continue;
+      const outer = Math.min(r1, maxRangeKm);
+      if (outer <= r0) continue;
 
-      const p1 = destination(lat, lon, az0, r0);
-      const p2 = destination(lat, lon, az1, r0);
-      const p3 = destination(lat, lon, az1, r1);
-      const p4 = destination(lat, lon, az0, r1);
+      const [x1, y1] = polarXY(az0, r0);
+      const [x2, y2] = polarXY(az1, r0);
+      const [x3, y3] = polarXY(az1, outer);
+      const [x4, y4] = polarXY(az0, outer);
 
-      const [x1, y1] = project(p1.lat, p1.lon);
-      const [x2, y2] = project(p2.lat, p2.lon);
-      const [x3, y3] = project(p3.lat, p3.lon);
-      const [x4, y4] = project(p4.lat, p4.lon);
-
-      fillConvexQuad(buf, width, height, x1, y1, x2, y2, x3, y3, x4, y4, color);
+      fillConvexQuad(buf, size, size, x1, y1, x2, y2, x3, y3, x4, y4, color);
     }
   }
 

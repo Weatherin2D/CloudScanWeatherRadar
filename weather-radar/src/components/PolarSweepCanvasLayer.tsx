@@ -72,7 +72,7 @@ export default function PolarSweepCanvasLayer({
           bufferRef.current = document.createElement("canvas");
         }
 
-        const dprNow = () => Math.min(2, window.devicePixelRatio || 1);
+        const dprNow = () => Math.min(1.75, window.devicePixelRatio || 1);
 
         /** Reposition only — never assign width/height (that clears pixels). */
         const reposition = () => {
@@ -82,7 +82,7 @@ export default function PolarSweepCanvasLayer({
 
         const ensureSize = (c: HTMLCanvasElement): { w: number; h: number; dpr: number; resized: boolean } => {
           const size = map.getSize();
-          const dpr = dprNow();
+          const dpr = Math.min(1.75, window.devicePixelRatio || 1);
           const w = Math.max(1, Math.round(size.x * dpr));
           const h = Math.max(1, Math.round(size.y * dpr));
           const resized = c.width !== w || c.height !== h;

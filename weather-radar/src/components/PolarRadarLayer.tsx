@@ -9,15 +9,21 @@ export interface PolarFrame {
   id: string;
 }
 
+export type PolarLoadQuality = "preview" | "study";
+
 interface Props<T extends PolarFrame> {
   frames: T[];
   frameIndex: number;
   opacity: number;
   stops: ColorStop[];
-  loadFrame: (frame: T) => Promise<PolarRenderResult | null>;
+  loadFrame: (
+    frame: T,
+    quality?: PolarLoadQuality,
+  ) => Promise<PolarRenderResult | null>;
 }
 
 const PREFETCH_AFTER_FIRST = 2;
+const OVERLAY_CLASS = "radar-polar-overlay";
 
 export default function PolarRadarLayer<T extends PolarFrame>({
   frames,
@@ -34,6 +40,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
   const activeIdRef = useRef<string | null>(null);
   const lastShownIdRef = useRef<string | null>(null);
   const prefetchGenRef = useRef(0);
+  const studyGenRef = useRef(0);
   const [cacheRev, bumpCache] = useState(0);
 
   loadFrameRef.current = loadFrame;
@@ -60,7 +67,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
     clearLocalCache();
   }, [frameScope]);
 
-  // Active-first: concurrency 1 until first frame paints, then warm neighbors.
+  // Active-first preview: concurrency 1 until first frame paints, then warm neighbors.
   useEffect(() => {
     if (!frames.length) return;
     const gen = ++prefetchGenRef.current;
@@ -110,9 +117,12 @@ export default function PolarRadarLayer<T extends PolarFrame>({
         inFlight.add(id);
 
         loadFrameRef
-          .current(frame)
+          .current(frame, "preview")
           .then((result) => {
             if (gen !== prefetchGenRef.current || !result?.dataUrl) return;
+            const existing = cacheRef.current.get(id);
+            // Never replace study-quality with a later preview.
+            if (existing?.quality === "study") return;
             cacheRef.current.set(id, result);
             bumpCache((n) => n + 1);
 
@@ -132,7 +142,6 @@ export default function PolarRadarLayer<T extends PolarFrame>({
               queue.unshift(active);
               queued.add(active);
             }
-            // If active was already cached from shared store, still open background
             if (!firstReady && active && cacheRef.current.has(active)) {
               firstReady = true;
               concurrency = PREFETCH_AFTER_FIRST;
@@ -143,9 +152,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
       }
     };
 
-    // Only the active frame until it lands.
     enqueue(activeIdRef.current ?? frames[frames.length - 1]?.id);
-    // Shared cache may already have it
     const active = activeIdRef.current;
     if (active && cacheRef.current.has(active)) {
       firstReady = true;
@@ -159,24 +166,38 @@ export default function PolarRadarLayer<T extends PolarFrame>({
     };
   }, [frames, loadFrame]);
 
-  // Keep overlay in sync when scrubbing; shared cache makes reloads cheap.
+  // Upgrade the visible frame to study quality after preview is on screen.
   useEffect(() => {
     if (!activeId) return;
-    if (cacheRef.current.has(activeId)) {
+    const existing = cacheRef.current.get(activeId);
+    if (existing?.quality === "study") {
       bumpCache((n) => n + 1);
       return;
     }
+
     const frame = frames.find((f) => f.id === activeId);
     if (!frame) return;
-    const gen = prefetchGenRef.current;
-    loadFrameRef
-      .current(frame)
-      .then((result) => {
-        if (gen !== prefetchGenRef.current || !result?.dataUrl) return;
-        cacheRef.current.set(activeId, result);
-        bumpCache((n) => n + 1);
-      })
-      .catch(() => {});
+    const gen = ++studyGenRef.current;
+
+    // Ensure preview is loading/shown, then upgrade.
+    const run = async () => {
+      if (!cacheRef.current.has(activeId)) {
+        const preview = await loadFrameRef.current(frame, "preview");
+        if (gen !== studyGenRef.current || !preview?.dataUrl) return;
+        if (cacheRef.current.get(activeId)?.quality !== "study") {
+          cacheRef.current.set(activeId, preview);
+          bumpCache((n) => n + 1);
+        }
+      }
+
+      const study = await loadFrameRef.current(frame, "study");
+      if (gen !== studyGenRef.current || !study?.dataUrl) return;
+      if (activeIdRef.current !== activeId) return;
+      cacheRef.current.set(activeId, study);
+      bumpCache((n) => n + 1);
+    };
+
+    void run();
   }, [activeId, frames]);
 
   useEffect(() => {
@@ -203,6 +224,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
         opacity,
         interactive: false,
         zIndex: 10,
+        className: OVERLAY_CLASS,
       });
       ov.addTo(map);
       overlaysRef.current.set(showId, ov);
@@ -213,6 +235,10 @@ export default function PolarRadarLayer<T extends PolarFrame>({
       }
       ov.setBounds(L.latLngBounds(bounds));
       ov.setOpacity(opacity);
+      const img = ov.getElement();
+      if (img && !img.classList.contains(OVERLAY_CLASS)) {
+        img.classList.add(OVERLAY_CLASS);
+      }
     }
 
     if (activeId && cacheRef.current.has(activeId)) {

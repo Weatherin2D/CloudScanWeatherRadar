@@ -1,7 +1,7 @@
 import type { PolarRenderResult } from "./renderPolar";
 import { revokePolarUrl } from "./renderPolar";
 
-const MAX_ENTRIES = 32;
+const MAX_ENTRIES = 48;
 
 interface CacheEntry {
   result: PolarRenderResult;

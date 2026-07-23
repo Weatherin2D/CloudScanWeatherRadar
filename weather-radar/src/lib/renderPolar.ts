@@ -26,12 +26,23 @@ export interface PolarRenderResult {
   bounds: [[number, number], [number, number]];
   /** True when dataUrl is an object URL that should be revoked on eviction. */
   isObjectUrl?: boolean;
+  /** Raster quality tier used for this image. */
+  quality?: "preview" | "study";
 }
 
 export type GeographicPolarFrame = PolarRenderResult;
 
-/** Polar-space raster size — sharp on map, cheap enough for first paint. */
-export const POLAR_GATE_MAX_SIZE = 1024;
+/** Fast first-paint polar raster (animation / cold start). */
+export const POLAR_GATE_PREVIEW_SIZE = 1024;
+
+/**
+ * Study-quality polar raster — ~0.3 km/px over a 460 km N0B sweep,
+ * close to Level-III 0.25 km gates so storm structure stays sharp when zoomed.
+ */
+export const POLAR_GATE_STUDY_SIZE = 3072;
+
+/** @deprecated Prefer PREVIEW / STUDY sizes. */
+export const POLAR_GATE_MAX_SIZE = POLAR_GATE_STUDY_SIZE;
 
 export interface OdimScanMeta {
   lat: number;
@@ -240,7 +251,7 @@ export async function renderLevel3PolarGates(
   _lat: number,
   _lon: number,
   stops: ColorStop[],
-  maxSize = POLAR_GATE_MAX_SIZE,
+  maxSize = POLAR_GATE_STUDY_SIZE,
   reflectivity = false,
   fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
 ): Promise<PolarRenderResult> {
@@ -249,7 +260,9 @@ export async function renderLevel3PolarGates(
   const maxRangeKm = level3MaxRangeKm(layer);
   if (maxRangeKm <= 0) return { dataUrl: "", bounds };
 
-  const size = Math.max(256, Math.min(maxSize, POLAR_GATE_MAX_SIZE));
+  const size = Math.max(256, Math.min(maxSize, POLAR_GATE_STUDY_SIZE));
+  const quality: "preview" | "study" =
+    size >= POLAR_GATE_STUDY_SIZE * 0.75 ? "study" : "preview";
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
@@ -275,6 +288,9 @@ export async function renderLevel3PolarGates(
   };
 
   for (let ri = 0; ri < layer.radials.length; ri++) {
+    if (quality === "study" && ri > 0 && ri % 24 === 0) {
+      await Promise.resolve();
+    }
     const radial = layer.radials[ri]!;
     const [az0, az1] = radialAzimuthSpan(radial, ri, layer);
     const binsInRadial = Math.min(radial.bins.length, binLimit);
@@ -302,14 +318,19 @@ export async function renderLevel3PolarGates(
 
   ctx.putImageData(imageData, 0, 0);
   const encoded = await canvasToObjectUrl(canvas);
-  return { dataUrl: encoded.dataUrl, bounds, isObjectUrl: encoded.isObjectUrl };
+  return {
+    dataUrl: encoded.dataUrl,
+    bounds,
+    isObjectUrl: encoded.isObjectUrl,
+    quality,
+  };
 }
 
 /** Render ODIM SCAN as native polar range gates. */
 export async function renderOdimPolarGates(
   scan: OdimScanMeta,
   stops: ColorStop[],
-  maxSize = POLAR_GATE_MAX_SIZE,
+  maxSize = POLAR_GATE_STUDY_SIZE,
   reflectivity = true,
   fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
 ): Promise<PolarRenderResult> {
@@ -319,7 +340,9 @@ export async function renderOdimPolarGates(
     scan;
   const maxRangeKm = Math.max(1, (rstart + nbins * rscale) / 1000);
 
-  const size = Math.max(256, Math.min(maxSize, POLAR_GATE_MAX_SIZE));
+  const size = Math.max(256, Math.min(maxSize, POLAR_GATE_STUDY_SIZE));
+  const quality: "preview" | "study" =
+    size >= POLAR_GATE_STUDY_SIZE * 0.75 ? "study" : "preview";
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
@@ -345,6 +368,9 @@ export async function renderOdimPolarGates(
   };
 
   for (let ray = 0; ray < nrays; ray++) {
+    if (quality === "study" && ray > 0 && ray % 24 === 0) {
+      await Promise.resolve();
+    }
     const az = (a1gate + ray * azStep) % 360;
     const az0 = az - azStep / 2;
     const az1 = az + azStep / 2;
@@ -374,7 +400,12 @@ export async function renderOdimPolarGates(
 
   ctx.putImageData(imageData, 0, 0);
   const encoded = await canvasToObjectUrl(canvas);
-  return { dataUrl: encoded.dataUrl, bounds, isObjectUrl: encoded.isObjectUrl };
+  return {
+    dataUrl: encoded.dataUrl,
+    bounds,
+    isObjectUrl: encoded.isObjectUrl,
+    quality,
+  };
 }
 
 /** Render Level-III to a lat/lon-aligned PNG suitable for Leaflet image overlays. */

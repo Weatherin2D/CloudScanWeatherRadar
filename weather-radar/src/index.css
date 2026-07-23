@@ -170,6 +170,11 @@
   image-rendering: -moz-crisp-edges;
 }
 
+/* High-res polar station overlays — bilinear when scaled down, native gate detail when zoomed */
+.leaflet-image-layer.radar-polar-overlay {
+  image-rendering: auto;
+}
+
 .lightning-canvas {
   pointer-events: none;
 }

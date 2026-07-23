@@ -4,8 +4,13 @@ import type { ColorStop, ReflectivityFadeSettings } from "@/lib/palPalette";
 import { paletteCacheKey } from "@/lib/palPalette";
 import { loadOdimScan, type OperaFrame } from "@/lib/operaRadar";
 import { loadPolarFrameCached } from "@/lib/polarFrameCache";
-import { POLAR_GATE_MAX_SIZE, renderOdimPolarGates } from "@/lib/renderPolar";
-import PolarRadarLayer from "./PolarRadarLayer";
+import {
+  POLAR_GATE_PREVIEW_SIZE,
+  POLAR_GATE_STUDY_SIZE,
+  renderOdimPolarGates,
+  type PolarRenderResult,
+} from "@/lib/renderPolar";
+import PolarRadarLayer, { type PolarLoadQuality } from "./PolarRadarLayer";
 
 interface Props {
   station: RadarStation;
@@ -32,8 +37,12 @@ export default function OperaRadarLayer({
   );
 
   const loadFrame = useCallback(
-    async (frame: OperaFrame & { id: string }) => {
-      const cacheKey = `opera:g2:${frame.odimUrl}:${station.lat}:${station.lon}:${palKey}`;
+    async (
+      frame: OperaFrame & { id: string },
+      quality: PolarLoadQuality = "preview",
+    ): Promise<PolarRenderResult | null> => {
+      const size = quality === "study" ? POLAR_GATE_STUDY_SIZE : POLAR_GATE_PREVIEW_SIZE;
+      const cacheKey = `opera:g3:${quality}:${frame.odimUrl}:${station.lat}:${station.lon}:${palKey}`;
       return loadPolarFrameCached(cacheKey, async () => {
         try {
           const scan = await loadOdimScan(frame.odimUrl, station.lat, station.lon);
@@ -41,7 +50,7 @@ export default function OperaRadarLayer({
           return renderOdimPolarGates(
             scan,
             stops,
-            POLAR_GATE_MAX_SIZE,
+            size,
             reflectivity,
             reflectivityFade,
           );

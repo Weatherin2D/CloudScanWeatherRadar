@@ -1,11 +1,16 @@
 import { useCallback, useMemo } from "react";
 import type { ColorStop, ReflectivityFadeSettings } from "@/lib/palPalette";
 import { paletteCacheKey } from "@/lib/palPalette";
-import { parseLevel3 } from "@/lib/level3Parse";
 import { level3ObjectUrl, type Level3Frame } from "@/lib/level3Radar";
+import { loadParsedLevel3 } from "@/lib/level3ParsedCache";
 import { loadPolarFrameCached } from "@/lib/polarFrameCache";
-import { POLAR_GATE_MAX_SIZE, renderLevel3PolarGates } from "@/lib/renderPolar";
-import PolarRadarLayer from "./PolarRadarLayer";
+import {
+  POLAR_GATE_PREVIEW_SIZE,
+  POLAR_GATE_STUDY_SIZE,
+  renderLevel3PolarGates,
+  type PolarRenderResult,
+} from "@/lib/renderPolar";
+import PolarRadarLayer, { type PolarLoadQuality } from "./PolarRadarLayer";
 
 interface Props {
   frames: Level3Frame[];
@@ -30,12 +35,14 @@ export default function Level3RadarLayer({
   );
 
   const loadFrame = useCallback(
-    async (frame: Level3Frame & { id: string }) => {
-      const cacheKey = `l3:g2:${frame.key}:${palKey}`;
+    async (
+      frame: Level3Frame & { id: string },
+      quality: PolarLoadQuality = "preview",
+    ): Promise<PolarRenderResult | null> => {
+      const size = quality === "study" ? POLAR_GATE_STUDY_SIZE : POLAR_GATE_PREVIEW_SIZE;
+      const cacheKey = `l3:g3:${quality}:${frame.key}:${palKey}`;
       return loadPolarFrameCached(cacheKey, async () => {
-        const res = await fetch(level3ObjectUrl(frame.key));
-        if (!res.ok) return null;
-        const parsed = await parseLevel3(await res.arrayBuffer());
+        const parsed = await loadParsedLevel3(frame.key, level3ObjectUrl(frame.key));
         if (!parsed) return null;
 
         return renderLevel3PolarGates(
@@ -43,7 +50,7 @@ export default function Level3RadarLayer({
           parsed.latitude,
           parsed.longitude,
           stops,
-          POLAR_GATE_MAX_SIZE,
+          size,
           reflectivity,
           reflectivityFade,
         );

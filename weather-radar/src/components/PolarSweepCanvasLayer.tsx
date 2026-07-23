@@ -8,7 +8,7 @@ import {
 } from "@/lib/palPalette";
 import type { Level3Parsed } from "@/lib/level3Parse";
 import type { OdimScanMeta } from "@/lib/renderPolar";
-import { drawLevel3GatesOnMap, drawOdimGatesOnMap } from "@/lib/drawPolarGates";
+import { paintLevel3Gates, paintOdimGates } from "@/lib/drawPolarGates";
 
 export type PolarSweepData =
   | { kind: "level3"; parsed: Level3Parsed }
@@ -23,8 +23,10 @@ interface Props {
 }
 
 /**
- * Draws native polar gates in map pixel space so zooming stays sharp
- * (RadarScope/WeatherWise-style), instead of upscaling a fixed PNG overlay.
+ * Map-space polar gate canvas that stays visible while panning/zooming:
+ * - never clears on pan (only repositions)
+ * - paints into an offscreen buffer, then blits (no blank flash)
+ * - debounces zoom/resize redraws
  */
 export default function PolarSweepCanvasLayer({
   sweep,
@@ -35,10 +37,13 @@ export default function PolarSweepCanvasLayer({
 }: Props) {
   const map = useMap();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const bufferRef = useRef<HTMLCanvasElement | null>(null);
   const layerRef = useRef<L.Layer | null>(null);
   const sweepRef = useRef(sweep);
   const opacityRef = useRef(opacity);
-  const redrawTimer = useRef<number | null>(null);
+  const paintGenRef = useRef(0);
+  const debounceRef = useRef<number | null>(null);
+  const paintFnRef = useRef<(() => void) | null>(null);
 
   const lut = useMemo(
     () => stopsToDbzUint32LUT(stops, reflectivity, reflectivityFade),
@@ -51,87 +56,161 @@ export default function PolarSweepCanvasLayer({
 
   useEffect(() => {
     const CanvasOverlay = L.Layer.extend({
-      onAdd(this: L.Layer & { _canvas?: HTMLCanvasElement; _onView?: () => void; _onMove?: () => void }) {
+      onAdd(this: L.Layer & {
+        _canvas?: HTMLCanvasElement;
+        _onMove?: () => void;
+        _onView?: () => void;
+        _onZoomStart?: () => void;
+      }) {
         const canvas = L.DomUtil.create("canvas", "radar-polar-canvas") as HTMLCanvasElement;
         canvas.style.pointerEvents = "none";
         this._canvas = canvas;
         canvasRef.current = canvas;
         map.getPane("overlayPane")?.appendChild(canvas);
 
-        const syncSize = () => {
-          const size = map.getSize();
-          const dpr = Math.min(2.5, window.devicePixelRatio || 1);
+        if (!bufferRef.current) {
+          bufferRef.current = document.createElement("canvas");
+        }
+
+        const dprNow = () => Math.min(2, window.devicePixelRatio || 1);
+
+        /** Reposition only — never assign width/height (that clears pixels). */
+        const reposition = () => {
           const topLeft = map.containerPointToLayerPoint([0, 0]);
-          canvas.width = Math.max(1, Math.round(size.x * dpr));
-          canvas.height = Math.max(1, Math.round(size.y * dpr));
-          canvas.style.width = `${size.x}px`;
-          canvas.style.height = `${size.y}px`;
           L.DomUtil.setPosition(canvas, topLeft);
-          return dpr;
+        };
+
+        const ensureSize = (c: HTMLCanvasElement): { w: number; h: number; dpr: number; resized: boolean } => {
+          const size = map.getSize();
+          const dpr = dprNow();
+          const w = Math.max(1, Math.round(size.x * dpr));
+          const h = Math.max(1, Math.round(size.y * dpr));
+          const resized = c.width !== w || c.height !== h;
+          if (resized) {
+            c.width = w;
+            c.height = h;
+            c.style.width = `${size.x}px`;
+            c.style.height = `${size.y}px`;
+          }
+          return { w, h, dpr, resized };
         };
 
         const paint = () => {
-          const c = this._canvas;
-          if (!c) return;
-          const dpr = syncSize();
-          const ctx = c.getContext("2d");
-          if (!ctx) return;
+          const visible = this._canvas;
+          const buffer = bufferRef.current;
+          if (!visible || !buffer) return;
+
+          const gen = ++paintGenRef.current;
+          reposition();
+          const { w, h, dpr } = ensureSize(buffer);
+          // Keep visible canvas same CSS size; only replace pixels after buffer is ready
+          if (visible.style.width !== `${map.getSize().x}px`) {
+            visible.style.width = `${map.getSize().x}px`;
+            visible.style.height = `${map.getSize().y}px`;
+          }
 
           const data = sweepRef.current;
-          const op = opacityRef.current;
-          const palette = lutRef.current;
-          const viewport = { width: c.width, height: c.height, dpr };
+          const bufCtx = buffer.getContext("2d");
+          if (!bufCtx) return;
 
           if (!data) {
-            ctx.clearRect(0, 0, c.width, c.height);
+            // Hold last pixels — do not clear visible canvas
             return;
           }
 
+          const imageData = bufCtx.createImageData(w, h);
           if (data.kind === "level3") {
-            drawLevel3GatesOnMap(
-              ctx,
+            paintLevel3Gates(
+              imageData,
               map,
               data.parsed.layer,
               data.parsed.latitude,
               data.parsed.longitude,
-              palette,
-              op,
-              viewport,
+              lutRef.current,
+              opacityRef.current,
+              dpr,
             );
           } else {
-            drawOdimGatesOnMap(ctx, map, data.scan, palette, op, viewport);
+            paintOdimGates(
+              imageData,
+              map,
+              data.scan,
+              lutRef.current,
+              opacityRef.current,
+              dpr,
+            );
           }
+
+          if (gen !== paintGenRef.current) return;
+
+          bufCtx.putImageData(imageData, 0, 0);
+
+          // Resize visible only when needed, then blit buffer → visible (atomic swap)
+          const vis = ensureSize(visible);
+          const vctx = visible.getContext("2d");
+          if (!vctx) return;
+          if (vis.resized) {
+            // resized cleared visible — blit immediately
+          }
+          vctx.setTransform(1, 0, 0, 1, 0, 0);
+          vctx.clearRect(0, 0, visible.width, visible.height);
+          vctx.drawImage(buffer, 0, 0);
+          reposition();
         };
 
-        const schedulePaint = () => {
-          if (redrawTimer.current != null) {
-            cancelAnimationFrame(redrawTimer.current);
+        paintFnRef.current = paint;
+
+        const schedulePaint = (delayMs = 0) => {
+          if (debounceRef.current != null) {
+            window.clearTimeout(debounceRef.current);
+            debounceRef.current = null;
           }
-          redrawTimer.current = requestAnimationFrame(() => {
-            redrawTimer.current = null;
-            paint();
-          });
+          if (delayMs <= 0) {
+            requestAnimationFrame(() => paint());
+            return;
+          }
+          debounceRef.current = window.setTimeout(() => {
+            debounceRef.current = null;
+            requestAnimationFrame(() => paint());
+          }, delayMs);
         };
 
         this._onMove = () => {
-          syncSize();
+          // Pan: only move the canvas with the map — keep pixels
+          reposition();
         };
-        this._onView = schedulePaint;
+        this._onZoomStart = () => {
+          // Keep last frame visible during zoom animation
+          reposition();
+        };
+        this._onView = () => {
+          // Zoom/resize need a fresh projection — slight debounce to coalesce events
+          schedulePaint(32);
+        };
 
         map.on("move", this._onMove, this);
+        map.on("zoomstart", this._onZoomStart, this);
         map.on("moveend zoomend resize viewreset", this._onView, this);
         paint();
       },
-      onRemove(this: L.Layer & { _canvas?: HTMLCanvasElement; _onView?: () => void; _onMove?: () => void }) {
-        if (redrawTimer.current != null) {
-          cancelAnimationFrame(redrawTimer.current);
-          redrawTimer.current = null;
+      onRemove(this: L.Layer & {
+        _canvas?: HTMLCanvasElement;
+        _onMove?: () => void;
+        _onView?: () => void;
+        _onZoomStart?: () => void;
+      }) {
+        if (debounceRef.current != null) {
+          window.clearTimeout(debounceRef.current);
+          debounceRef.current = null;
         }
+        paintGenRef.current++;
         if (this._onMove) map.off("move", this._onMove, this);
+        if (this._onZoomStart) map.off("zoomstart", this._onZoomStart, this);
         if (this._onView) map.off("moveend zoomend resize viewreset", this._onView, this);
         this._canvas?.remove();
         this._canvas = undefined;
         canvasRef.current = null;
+        paintFnRef.current = null;
       },
     });
 
@@ -147,44 +226,10 @@ export default function PolarSweepCanvasLayer({
     };
   }, [map]);
 
-  // Repaint when sweep / palette / opacity change
+  // Repaint when sweep / palette / opacity change — never blank first
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const size = map.getSize();
-    const dpr = Math.min(2.5, window.devicePixelRatio || 1);
-    if (canvas.width !== Math.round(size.x * dpr) || canvas.height !== Math.round(size.y * dpr)) {
-      const topLeft = map.containerPointToLayerPoint([0, 0]);
-      canvas.width = Math.max(1, Math.round(size.x * dpr));
-      canvas.height = Math.max(1, Math.round(size.y * dpr));
-      canvas.style.width = `${size.x}px`;
-      canvas.style.height = `${size.y}px`;
-      L.DomUtil.setPosition(canvas, topLeft);
-    }
-
-    const viewport = { width: canvas.width, height: canvas.height, dpr };
-    if (!sweep) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      return;
-    }
-    if (sweep.kind === "level3") {
-      drawLevel3GatesOnMap(
-        ctx,
-        map,
-        sweep.parsed.layer,
-        sweep.parsed.latitude,
-        sweep.parsed.longitude,
-        lut,
-        opacity,
-        viewport,
-      );
-    } else {
-      drawOdimGatesOnMap(ctx, map, sweep.scan, lut, opacity, viewport);
-    }
-  }, [map, sweep, lut, opacity]);
+    paintFnRef.current?.();
+  }, [sweep, lut, opacity]);
 
   return null;
 }

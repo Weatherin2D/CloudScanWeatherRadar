@@ -13,28 +13,14 @@ import type { OdimScanMeta } from "./renderPolar";
 export interface PolarDrawViewport {
   width: number;
   height: number;
-  /** Map container → canvas pixel scale (devicePixelRatio). */
   dpr: number;
 }
 
-/** Adaptive thinning so low zoom stays interactive; high zoom draws every gate. */
+/** Thin only when very zoomed out — avoids spoke artifacts at study zooms. */
 export function polarDrawSteps(zoom: number): { radialStep: number; binStep: number } {
-  if (zoom >= 10) return { radialStep: 1, binStep: 1 };
-  if (zoom >= 8) return { radialStep: 1, binStep: 1 };
-  if (zoom >= 7) return { radialStep: 1, binStep: 2 };
-  if (zoom >= 5) return { radialStep: 2, binStep: 3 };
-  return { radialStep: 3, binStep: 4 };
-}
-
-function unpackColor(
-  packed: number,
-  opacity: number,
-): { r: number; g: number; b: number; a: number } {
-  const r = packed & 255;
-  const g = (packed >>> 8) & 255;
-  const b = (packed >>> 16) & 255;
-  const a = Math.round(((packed >>> 24) & 255) * opacity);
-  return { r, g, b, a };
+  if (zoom >= 7) return { radialStep: 1, binStep: 1 };
+  if (zoom >= 5) return { radialStep: 1, binStep: 2 };
+  return { radialStep: 2, binStep: 3 };
 }
 
 function project(
@@ -47,96 +33,125 @@ function project(
   return { x: p.x * dpr, y: p.y * dpr };
 }
 
-function fillGate(
-  ctx: CanvasRenderingContext2D,
+/** Scanline fill into a Uint32 buffer (ABGR), much faster than Canvas path API. */
+function fillConvexQuad(
+  buf: Uint32Array,
+  width: number,
+  height: number,
+  x0: number,
+  y0: number,
   x1: number,
   y1: number,
   x2: number,
   y2: number,
   x3: number,
   y3: number,
-  x4: number,
-  y4: number,
-  r: number,
-  g: number,
-  b: number,
-  a: number,
+  color: number,
 ): void {
-  if (a < 1) return;
-  // Skip degenerate / sub-pixel gates (still draw if any edge is visible)
-  const minX = Math.min(x1, x2, x3, x4);
-  const maxX = Math.max(x1, x2, x3, x4);
-  const minY = Math.min(y1, y2, y3, y4);
-  const maxY = Math.max(y1, y2, y3, y4);
-  if (maxX - minX < 0.35 && maxY - minY < 0.35) {
-    ctx.fillStyle = `rgba(${r},${g},${b},${(a / 255).toFixed(3)})`;
-    ctx.fillRect(Math.round(minX), Math.round(minY), 1, 1);
-    return;
-  }
+  if ((color >>> 24) === 0) return;
 
-  ctx.fillStyle = `rgba(${r},${g},${b},${(a / 255).toFixed(3)})`;
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.lineTo(x3, y3);
-  ctx.lineTo(x4, y4);
-  ctx.closePath();
-  ctx.fill();
+  let minY = Math.floor(Math.min(y0, y1, y2, y3));
+  let maxY = Math.ceil(Math.max(y0, y1, y2, y3));
+  if (maxY < 0 || minY >= height) return;
+  minY = Math.max(0, minY);
+  maxY = Math.min(height - 1, maxY);
+
+  const edgeX = [x0, x1, x2, x3];
+  const edgeY = [y0, y1, y2, y3];
+
+  for (let y = minY; y <= maxY; y++) {
+    let n = 0;
+    const hits = [0, 0, 0, 0];
+    for (let i = 0; i < 4; i++) {
+      const xa = edgeX[i]!;
+      const ya = edgeY[i]!;
+      const xb = edgeX[(i + 1) % 4]!;
+      const yb = edgeY[(i + 1) % 4]!;
+      if ((ya <= y && yb > y) || (yb <= y && ya > y)) {
+        hits[n++] = xa + ((y - ya) / (yb - ya)) * (xb - xa);
+      }
+    }
+    if (n < 2) continue;
+    for (let i = 1; i < n; i++) {
+      const v = hits[i]!;
+      let j = i - 1;
+      while (j >= 0 && hits[j]! > v) {
+        hits[j + 1] = hits[j]!;
+        j--;
+      }
+      hits[j + 1] = v;
+    }
+    for (let i = 0; i + 1 < n; i += 2) {
+      let xStart = Math.ceil(hits[i]!);
+      let xEnd = Math.floor(hits[i + 1]!);
+      if (xEnd < 0 || xStart >= width) continue;
+      xStart = Math.max(0, xStart);
+      xEnd = Math.min(width - 1, xEnd);
+      const row = y * width;
+      for (let x = xStart; x <= xEnd; x++) buf[row + x] = color;
+    }
+  }
+}
+
+function applyOpacity(packed: number, opacity: number): number {
+  if (opacity >= 0.999) return packed;
+  const a = Math.round(((packed >>> 24) & 255) * opacity);
+  return (packed & 0x00ffffff) | (a << 24);
 }
 
 function gateInView(
   width: number,
   height: number,
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-  x3: number,
-  y3: number,
-  x4: number,
-  y4: number,
+  xs: number[],
+  ys: number[],
   pad: number,
 ): boolean {
-  const minX = Math.min(x1, x2, x3, x4);
-  const maxX = Math.max(x1, x2, x3, x4);
-  const minY = Math.min(y1, y2, y3, y4);
-  const maxY = Math.max(y1, y2, y3, y4);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < 4; i++) {
+    minX = Math.min(minX, xs[i]!);
+    maxX = Math.max(maxX, xs[i]!);
+    minY = Math.min(minY, ys[i]!);
+    maxY = Math.max(maxY, ys[i]!);
+  }
   return maxX >= -pad && minX <= width + pad && maxY >= -pad && minY <= height + pad;
 }
 
-/** Draw Level-III polar gates in map container pixel space (sharp at any zoom). */
-export function drawLevel3GatesOnMap(
-  ctx: CanvasRenderingContext2D,
+/** Paint Level-III gates into an ImageData buffer (caller putImageData). */
+export function paintLevel3Gates(
+  imageData: ImageData,
   map: LeafletMap,
   layer: Level3RadialLayer,
   siteLat: number,
   siteLon: number,
   lut: Uint32Array,
   opacity: number,
-  viewport: PolarDrawViewport,
+  dpr: number,
 ): void {
-  const { width, height, dpr } = viewport;
+  const width = imageData.width;
+  const height = imageData.height;
+  const buf = new Uint32Array(
+    imageData.data.buffer,
+    imageData.data.byteOffset,
+    width * height,
+  );
+  buf.fill(0);
+
   const { radialStep, binStep } = polarDrawSteps(map.getZoom());
   const maxRangeKm = level3MaxRangeKm(layer);
   const binLimit = level3BinCount(layer);
-  const pad = 64 * dpr;
-
-  ctx.clearRect(0, 0, width, height);
-  ctx.imageSmoothingEnabled = false;
+  const pad = 48 * dpr;
 
   for (let ri = 0; ri < layer.radials.length; ri += radialStep) {
     const radial = layer.radials[ri]!;
     const [az0, az1Raw] = radialAzimuthSpan(radial, ri, layer);
-    const azWiden =
-      radialStep > 1
-        ? ((az1Raw - az0 + 360) % 360 || 360 / Math.max(1, layer.radials.length)) *
-          (radialStep - 1) *
-          0.5
-        : 0;
-    const az1 = az1Raw + azWiden;
+    const span =
+      ((az1Raw - az0 + 360) % 360) || 360 / Math.max(1, layer.radials.length);
+    const az1 = az1Raw + (radialStep > 1 ? span * (radialStep - 1) * 0.5 : 0);
 
     const binsInRadial = Math.min(radial.bins.length, binLimit);
-    // Far → near so closer gates paint on top
     for (let b = binsInRadial - 1; b >= 0; b -= binStep) {
       const binStart = Math.max(0, b - binStep + 1);
       let bestVal: number | null = null;
@@ -147,14 +162,13 @@ export function drawLevel3GatesOnMap(
       }
       if (bestVal == null) continue;
 
-      const packed = lut[dbzToLutIndex(bestVal)]!;
-      const { r, g, b: bc, a } = unpackColor(packed, opacity);
-      if (a < 1) continue;
+      const color = applyOpacity(lut[dbzToLutIndex(bestVal)]!, opacity);
+      if ((color >>> 24) === 0) continue;
 
       const [r0] = level3BinRangeKm(layer, binStart);
-      const [, r1Inner] = level3BinRangeKm(layer, b);
-      if (r1Inner <= 0 || r0 >= maxRangeKm) continue;
-      const outer = Math.min(r1Inner, maxRangeKm);
+      const [, r1] = level3BinRangeKm(layer, b);
+      if (r1 <= 0 || r0 >= maxRangeKm) continue;
+      const outer = Math.min(r1, maxRangeKm);
       if (outer <= r0) continue;
 
       const p1 = destination(siteLat, siteLon, az0, r0);
@@ -167,34 +181,59 @@ export function drawLevel3GatesOnMap(
       const c3 = project(map, p3.lat, p3.lon, dpr);
       const c4 = project(map, p4.lat, p4.lon, dpr);
 
-      if (!gateInView(width, height, c1.x, c1.y, c2.x, c2.y, c3.x, c3.y, c4.x, c4.y, pad)) {
+      if (
+        !gateInView(
+          width,
+          height,
+          [c1.x, c2.x, c3.x, c4.x],
+          [c1.y, c2.y, c3.y, c4.y],
+          pad,
+        )
+      ) {
         continue;
       }
 
-      fillGate(ctx, c1.x, c1.y, c2.x, c2.y, c3.x, c3.y, c4.x, c4.y, r, g, bc, a);
+      fillConvexQuad(
+        buf,
+        width,
+        height,
+        c1.x,
+        c1.y,
+        c2.x,
+        c2.y,
+        c3.x,
+        c3.y,
+        c4.x,
+        c4.y,
+        color,
+      );
     }
   }
 }
 
-/** Draw OPERA ODIM polar gates in map container pixel space. */
-export function drawOdimGatesOnMap(
-  ctx: CanvasRenderingContext2D,
+export function paintOdimGates(
+  imageData: ImageData,
   map: LeafletMap,
   scan: OdimScanMeta,
   lut: Uint32Array,
   opacity: number,
-  viewport: PolarDrawViewport,
+  dpr: number,
 ): void {
-  const { width, height, dpr } = viewport;
+  const width = imageData.width;
+  const height = imageData.height;
+  const buf = new Uint32Array(
+    imageData.data.buffer,
+    imageData.data.byteOffset,
+    width * height,
+  );
+  buf.fill(0);
+
   const { radialStep, binStep } = polarDrawSteps(map.getZoom());
   const { lat, lon, nbins, nrays, rstart, rscale, a1gate, values, nodata, undetect, gain, offset } =
     scan;
   const maxRangeKm = Math.max(1, (rstart + nbins * rscale) / 1000);
   const azStepBase = nrays > 0 ? 360 / nrays : 1;
-  const pad = 64 * dpr;
-
-  ctx.clearRect(0, 0, width, height);
-  ctx.imageSmoothingEnabled = false;
+  const pad = 48 * dpr;
 
   for (let ray = 0; ray < nrays; ray += radialStep) {
     const az = (a1gate + ray * azStepBase) % 360;
@@ -213,9 +252,8 @@ export function drawOdimGatesOnMap(
       }
       if (bestVal == null) continue;
 
-      const packed = lut[dbzToLutIndex(bestVal)]!;
-      const { r, g, b: bc, a } = unpackColor(packed, opacity);
-      if (a < 1) continue;
+      const color = applyOpacity(lut[dbzToLutIndex(bestVal)]!, opacity);
+      if ((color >>> 24) === 0) continue;
 
       const r0 = (rstart + binStart * rscale) / 1000;
       const r1 = (rstart + (bin + 1) * rscale) / 1000;
@@ -233,11 +271,32 @@ export function drawOdimGatesOnMap(
       const c3 = project(map, p3.lat, p3.lon, dpr);
       const c4 = project(map, p4.lat, p4.lon, dpr);
 
-      if (!gateInView(width, height, c1.x, c1.y, c2.x, c2.y, c3.x, c3.y, c4.x, c4.y, pad)) {
+      if (
+        !gateInView(
+          width,
+          height,
+          [c1.x, c2.x, c3.x, c4.x],
+          [c1.y, c2.y, c3.y, c4.y],
+          pad,
+        )
+      ) {
         continue;
       }
 
-      fillGate(ctx, c1.x, c1.y, c2.x, c2.y, c3.x, c3.y, c4.x, c4.y, r, g, bc, a);
+      fillConvexQuad(
+        buf,
+        width,
+        height,
+        c1.x,
+        c1.y,
+        c2.x,
+        c2.y,
+        c3.x,
+        c3.y,
+        c4.x,
+        c4.y,
+        color,
+      );
     }
   }
 }

@@ -15,9 +15,9 @@ interface Props {
   reflectivityFade?: ReflectivityFadeSettings;
 }
 
-const PREFETCH = 2;
+const PREFETCH_CONCURRENCY = 2;
 const scanCache = new Map<string, OdimScanMeta>();
-const MAX_SCAN_CACHE = 20;
+const MAX_SCAN_CACHE = 24;
 
 function cacheScan(url: string, scan: OdimScanMeta) {
   scanCache.set(url, scan);
@@ -39,15 +39,17 @@ export default function OperaRadarLayer({
 }: Props) {
   const [sweep, setSweep] = useState<PolarSweepData | null>(null);
   const framesRef = useRef(frames);
+  const lastGoodRef = useRef<PolarSweepData | null>(null);
   framesRef.current = frames;
 
   const activeUrl = frames[frameIndex]?.odimUrl ?? frames.at(-1)?.odimUrl ?? null;
 
   useEffect(() => {
-    if (!activeUrl) {
-      setSweep(null);
-      return;
-    }
+    // Keep last frame until the new station's first scan arrives
+  }, [station.id]);
+
+  useEffect(() => {
+    if (!activeUrl) return;
 
     let cancelled = false;
 
@@ -63,20 +65,49 @@ export default function OperaRadarLayer({
       }
     };
 
+    const show = (scan: OdimScanMeta) => {
+      const next: PolarSweepData = { kind: "opera", scan };
+      lastGoodRef.current = next;
+      setSweep(next);
+    };
+
+    const cached = scanCache.get(activeUrl);
+    if (cached) show(cached);
+    else if (lastGoodRef.current) setSweep(lastGoodRef.current);
+
     const run = async () => {
       const scan = await loadOne(activeUrl);
       if (cancelled) return;
-      if (scan) setSweep({ kind: "opera", scan });
-      else setSweep(null);
+      if (scan) show(scan);
 
       const list = framesRef.current;
       const idx = list.findIndex((f) => f.odimUrl === activeUrl);
-      if (idx < 0) return;
-      for (const delta of [1, -1, 2, -2].slice(0, PREFETCH * 2)) {
-        const frame = list[(idx + delta + list.length) % list.length];
-        if (!frame || scanCache.has(frame.odimUrl)) continue;
-        void loadOne(frame.odimUrl);
+      const order: string[] = [];
+      if (idx >= 0) {
+        for (const d of [1, -1, 2, -2]) {
+          const f = list[(idx + d + list.length) % list.length];
+          if (f) order.push(f.odimUrl);
+        }
+        for (const f of list) {
+          if (!order.includes(f.odimUrl)) order.push(f.odimUrl);
+        }
       }
+
+      let cursor = 0;
+      let running = 0;
+      const pump = () => {
+        if (cancelled) return;
+        while (running < PREFETCH_CONCURRENCY && cursor < order.length) {
+          const url = order[cursor++]!;
+          if (scanCache.has(url)) continue;
+          running++;
+          void loadOne(url).finally(() => {
+            running--;
+            pump();
+          });
+        }
+      };
+      pump();
     };
 
     void run();
@@ -85,13 +116,9 @@ export default function OperaRadarLayer({
     };
   }, [activeUrl, station.lat, station.lon, frames]);
 
-  useEffect(() => {
-    setSweep(null);
-  }, [station.id]);
-
   return (
     <PolarSweepCanvasLayer
-      sweep={sweep}
+      sweep={sweep ?? lastGoodRef.current}
       opacity={opacity}
       stops={stops}
       reflectivity={reflectivity}

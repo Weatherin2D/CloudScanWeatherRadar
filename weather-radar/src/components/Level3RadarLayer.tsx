@@ -14,11 +14,11 @@ interface Props {
   reflectivityFade?: ReflectivityFadeSettings;
 }
 
-const PREFETCH = 2;
+const PREFETCH_CONCURRENCY = 2;
 
 /**
- * Station Level-III for all tilts/products: parse once, draw gates in map
- * pixel space so zoom quality matches RadarScope/WeatherWise study views.
+ * Station Level-III: parse/cache sweeps and draw in map space.
+ * Holds the last good frame so imagery never blanks while the next loads.
  */
 export default function Level3RadarLayer({
   frames,
@@ -31,6 +31,7 @@ export default function Level3RadarLayer({
   const [sweep, setSweep] = useState<PolarSweepData | null>(null);
   const cacheRef = useRef(new Map<string, Level3Parsed>());
   const framesRef = useRef(frames);
+  const lastGoodRef = useRef<PolarSweepData | null>(null);
   framesRef.current = frames;
 
   const activeKey = frames[frameIndex]?.key ?? frames.at(-1)?.key ?? null;
@@ -38,18 +39,13 @@ export default function Level3RadarLayer({
 
   useEffect(() => {
     cacheRef.current.clear();
-    setSweep(null);
+    // Keep lastGood visible across product/station until first new frame arrives
   }, [scope]);
 
   useEffect(() => {
-    if (!activeKey) {
-      setSweep(null);
-      return;
-    }
+    if (!activeKey) return;
 
     let cancelled = false;
-    const cached = cacheRef.current.get(activeKey);
-    if (cached) setSweep({ kind: "level3", parsed: cached });
 
     const loadOne = async (key: string) => {
       const hit = cacheRef.current.get(key);
@@ -59,19 +55,52 @@ export default function Level3RadarLayer({
       return parsed;
     };
 
+    const show = (parsed: Level3Parsed) => {
+      const next: PolarSweepData = { kind: "level3", parsed };
+      lastGoodRef.current = next;
+      setSweep(next);
+    };
+
+    const cached = cacheRef.current.get(activeKey);
+    if (cached) show(cached);
+    else if (lastGoodRef.current) setSweep(lastGoodRef.current);
+
     const run = async () => {
       const parsed = await loadOne(activeKey);
       if (cancelled) return;
-      setSweep(parsed ? { kind: "level3", parsed } : null);
+      if (parsed) show(parsed);
 
+      // Prefetch full timeline with limited concurrency
       const list = framesRef.current;
       const idx = list.findIndex((f) => f.key === activeKey);
-      if (idx < 0) return;
-      for (const delta of [1, -1, 2, -2].slice(0, PREFETCH * 2)) {
-        const frame = list[(idx + delta + list.length) % list.length];
-        if (!frame || cacheRef.current.has(frame.key)) continue;
-        void loadOne(frame.key);
+      const order: string[] = [];
+      if (idx >= 0) {
+        for (const d of [1, -1, 2, -2, 3, -3]) {
+          const f = list[(idx + d + list.length) % list.length];
+          if (f) order.push(f.key);
+        }
+        for (const f of list) {
+          if (!order.includes(f.key)) order.push(f.key);
+        }
+      } else {
+        for (const f of list) order.push(f.key);
       }
+
+      let cursor = 0;
+      let running = 0;
+      const pump = () => {
+        if (cancelled) return;
+        while (running < PREFETCH_CONCURRENCY && cursor < order.length) {
+          const key = order[cursor++]!;
+          if (cacheRef.current.has(key)) continue;
+          running++;
+          void loadOne(key).finally(() => {
+            running--;
+            pump();
+          });
+        }
+      };
+      pump();
     };
 
     void run();
@@ -82,7 +111,7 @@ export default function Level3RadarLayer({
 
   return (
     <PolarSweepCanvasLayer
-      sweep={sweep}
+      sweep={sweep ?? lastGoodRef.current}
       opacity={opacity}
       stops={stops}
       reflectivity={reflectivity}

@@ -22,9 +22,27 @@ interface Props<T extends PolarFrame> {
   ) => Promise<PolarRenderResult | null>;
 }
 
-const PREFETCH_AFTER_FIRST = 3;
+const PREFETCH_AFTER_FIRST = 2;
 const OVERLAY_CLASS = "radar-polar-overlay";
 
+/** Decode before attaching so setUrl/swap never flashes empty. */
+function decodeOverlayImage(url: string): Promise<void> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+    img.src = url;
+    if (typeof img.decode === "function") {
+      img.decode().then(() => resolve()).catch(() => resolve());
+    }
+  });
+}
+
+/**
+ * Georeferenced ImageOverlay polar frames.
+ * Pan/zoom are pure Leaflet CSS transforms (instant) — no redraw on move.
+ * Study quality is prepared for the active frame without waiting on idle/moveend.
+ */
 export default function PolarRadarLayer<T extends PolarFrame>({
   frames,
   frameIndex,
@@ -41,6 +59,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
   const lastShownIdRef = useRef<string | null>(null);
   const prefetchGenRef = useRef(0);
   const studyGenRef = useRef(0);
+  const swapGenRef = useRef(0);
   const [cacheRev, bumpCache] = useState(0);
 
   loadFrameRef.current = loadFrame;
@@ -50,6 +69,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
   activeIdRef.current = activeId;
 
   const frameScope = frames[0]?.id?.split("_").slice(0, 2).join("_") ?? frames[0]?.id ?? "";
+  const framesKey = frames.map((f) => f.id).join("|");
 
   const clearLocalCache = () => {
     cacheRef.current.clear();
@@ -67,7 +87,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
     clearLocalCache();
   }, [frameScope]);
 
-  // Active-first preview: concurrency 1 until first frame paints, then warm neighbors.
+  // Prefetch previews for the timeline (fast). Active study is handled separately.
   useEffect(() => {
     if (!frames.length) return;
     const gen = ++prefetchGenRef.current;
@@ -121,7 +141,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
           .then((result) => {
             if (gen !== prefetchGenRef.current || !result?.dataUrl) return;
             const existing = cacheRef.current.get(id);
-            // Never replace study-quality with a later preview.
+            // Never demote study → preview.
             if (existing?.quality === "study") return;
             cacheRef.current.set(id, result);
             bumpCache((n) => n + 1);
@@ -164,34 +184,22 @@ export default function PolarRadarLayer<T extends PolarFrame>({
     return () => {
       if (prefetchGenRef.current === gen) prefetchGenRef.current++;
     };
-  }, [frames, loadFrame]);
+  }, [framesKey, loadFrame]);
 
-  // Upgrade active frame to study quality after preview — idle so it won't block first paint.
+  // Active frame → study quality immediately (no idle / moveend wait).
+  // Pan/zoom never "wait" for a deferred quality upgrade.
   useEffect(() => {
     if (!activeId) return;
-    const existing = cacheRef.current.get(activeId);
-    if (existing?.quality === "study") {
-      bumpCache((n) => n + 1);
-      return;
-    }
+    if (cacheRef.current.get(activeId)?.quality === "study") return;
 
-    const frame = frames.find((f) => f.id === activeId);
+    const frame = framesRef.current.find((f) => f.id === activeId);
     if (!frame) return;
     const gen = ++studyGenRef.current;
 
-    const whenIdle = () =>
-      new Promise<void>((resolve) => {
-        const ric = (window as Window & {
-          requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-        }).requestIdleCallback;
-        if (typeof ric === "function") {
-          ric(() => resolve(), { timeout: 500 });
-        } else {
-          setTimeout(resolve, 80);
-        }
-      });
+    void (async () => {
+      // Start study right away; preview may still paint first from prefetch.
+      const studyPromise = loadFrameRef.current(frame, "study");
 
-    const run = async () => {
       if (!cacheRef.current.has(activeId)) {
         const preview = await loadFrameRef.current(frame, "preview");
         if (gen !== studyGenRef.current || !preview?.dataUrl) return;
@@ -201,21 +209,15 @@ export default function PolarRadarLayer<T extends PolarFrame>({
         }
       }
 
-      await whenIdle();
-      if (gen !== studyGenRef.current || activeIdRef.current !== activeId) return;
-
-      const study = await loadFrameRef.current(frame, "study");
+      const study = await studyPromise;
       if (gen !== studyGenRef.current || !study?.dataUrl) return;
       if (activeIdRef.current !== activeId) return;
       cacheRef.current.set(activeId, study);
       bumpCache((n) => n + 1);
-    };
-
-    void run();
-  }, [activeId, frames]);
+    })();
+  }, [activeId, framesKey]);
 
   useEffect(() => {
-    // Hold last ready frame while active is still loading (no blank flash).
     const showId =
       (activeId && cacheRef.current.has(activeId) ? activeId : null) ??
       (lastShownIdRef.current && cacheRef.current.has(lastShownIdRef.current)
@@ -244,14 +246,37 @@ export default function PolarRadarLayer<T extends PolarFrame>({
       overlaysRef.current.set(showId, ov);
     } else {
       const el = ov.getElement();
-      if (!el || el.getAttribute("src") !== dataUrl) {
-        ov.setUrl(dataUrl);
-      }
-      ov.setBounds(L.latLngBounds(bounds));
-      ov.setOpacity(opacity);
-      const img = ov.getElement();
-      if (img && !img.classList.contains(OVERLAY_CLASS)) {
-        img.classList.add(OVERLAY_CLASS);
+      const needsUrl = !el || el.getAttribute("src") !== dataUrl;
+      if (needsUrl) {
+        const swapGen = ++swapGenRef.current;
+        const prev = ov;
+        const stillShowing = () => {
+          const live =
+            (activeIdRef.current && cacheRef.current.has(activeIdRef.current)
+              ? activeIdRef.current
+              : null) ?? lastShownIdRef.current;
+          return live === showId;
+        };
+        void (async () => {
+          await decodeOverlayImage(dataUrl);
+          if (swapGen !== swapGenRef.current) return;
+          if (overlaysRef.current.get(showId) !== prev) return;
+
+          const next = L.imageOverlay(dataUrl, L.latLngBounds(bounds), {
+            opacity: 0,
+            interactive: false,
+            zIndex: 11,
+            className: OVERLAY_CLASS,
+          });
+          next.addTo(map);
+          // Keep previous visible until next is attached — no blank flash from setUrl.
+          if (stillShowing()) next.setOpacity(opacity);
+          prev.setOpacity(0);
+          prev.remove();
+          overlaysRef.current.set(showId, next);
+        })();
+      } else {
+        ov.setOpacity(opacity);
       }
     }
 

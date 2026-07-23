@@ -1,16 +1,9 @@
-import { useCallback, useMemo } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ColorStop, ReflectivityFadeSettings } from "@/lib/palPalette";
-import { paletteCacheKey } from "@/lib/palPalette";
 import { level3ObjectUrl, type Level3Frame } from "@/lib/level3Radar";
 import { loadParsedLevel3 } from "@/lib/level3ParsedCache";
-import { loadPolarFrameCached } from "@/lib/polarFrameCache";
-import {
-  POLAR_GATE_PREVIEW_SIZE,
-  POLAR_GATE_STUDY_SIZE,
-  renderLevel3PolarGates,
-  type PolarRenderResult,
-} from "@/lib/renderPolar";
-import PolarRadarLayer, { type PolarLoadQuality } from "./PolarRadarLayer";
+import type { Level3Parsed } from "@/lib/level3Parse";
+import PolarSweepCanvasLayer, { type PolarSweepData } from "./PolarSweepCanvasLayer";
 
 interface Props {
   frames: Level3Frame[];
@@ -21,6 +14,12 @@ interface Props {
   reflectivityFade?: ReflectivityFadeSettings;
 }
 
+const PREFETCH = 2;
+
+/**
+ * Station Level-III for all tilts/products: parse once, draw gates in map
+ * pixel space so zoom quality matches RadarScope/WeatherWise study views.
+ */
 export default function Level3RadarLayer({
   frames,
   frameIndex,
@@ -29,48 +28,65 @@ export default function Level3RadarLayer({
   reflectivity = false,
   reflectivityFade,
 }: Props) {
-  const palKey = useMemo(
-    () => paletteCacheKey(stops, reflectivity, reflectivityFade),
-    [stops, reflectivity, reflectivityFade],
-  );
+  const [sweep, setSweep] = useState<PolarSweepData | null>(null);
+  const cacheRef = useRef(new Map<string, Level3Parsed>());
+  const framesRef = useRef(frames);
+  framesRef.current = frames;
 
-  const loadFrame = useCallback(
-    async (
-      frame: Level3Frame & { id: string },
-      quality: PolarLoadQuality = "preview",
-    ): Promise<PolarRenderResult | null> => {
-      const size = quality === "study" ? POLAR_GATE_STUDY_SIZE : POLAR_GATE_PREVIEW_SIZE;
-      const cacheKey = `l3:g3:${quality}:${frame.key}:${palKey}`;
-      return loadPolarFrameCached(cacheKey, async () => {
-        const parsed = await loadParsedLevel3(frame.key, level3ObjectUrl(frame.key));
-        if (!parsed) return null;
+  const activeKey = frames[frameIndex]?.key ?? frames.at(-1)?.key ?? null;
+  const scope = frames[0]?.key?.split("_").slice(0, 2).join("_") ?? "";
 
-        return renderLevel3PolarGates(
-          parsed.layer,
-          parsed.latitude,
-          parsed.longitude,
-          stops,
-          size,
-          reflectivity,
-          reflectivityFade,
-        );
-      });
-    },
-    [stops, reflectivity, reflectivityFade, palKey],
-  );
+  useEffect(() => {
+    cacheRef.current.clear();
+    setSweep(null);
+  }, [scope]);
 
-  const polarFrames = useMemo(
-    () => frames.map((f) => ({ ...f, id: f.key })),
-    [frames],
-  );
+  useEffect(() => {
+    if (!activeKey) {
+      setSweep(null);
+      return;
+    }
+
+    let cancelled = false;
+    const cached = cacheRef.current.get(activeKey);
+    if (cached) setSweep({ kind: "level3", parsed: cached });
+
+    const loadOne = async (key: string) => {
+      const hit = cacheRef.current.get(key);
+      if (hit) return hit;
+      const parsed = await loadParsedLevel3(key, level3ObjectUrl(key));
+      if (parsed) cacheRef.current.set(key, parsed);
+      return parsed;
+    };
+
+    const run = async () => {
+      const parsed = await loadOne(activeKey);
+      if (cancelled) return;
+      setSweep(parsed ? { kind: "level3", parsed } : null);
+
+      const list = framesRef.current;
+      const idx = list.findIndex((f) => f.key === activeKey);
+      if (idx < 0) return;
+      for (const delta of [1, -1, 2, -2].slice(0, PREFETCH * 2)) {
+        const frame = list[(idx + delta + list.length) % list.length];
+        if (!frame || cacheRef.current.has(frame.key)) continue;
+        void loadOne(frame.key);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeKey, frames]);
 
   return (
-    <PolarRadarLayer
-      frames={polarFrames}
-      frameIndex={frameIndex}
+    <PolarSweepCanvasLayer
+      sweep={sweep}
       opacity={opacity}
       stops={stops}
-      loadFrame={loadFrame}
+      reflectivity={reflectivity}
+      reflectivityFade={reflectivityFade}
     />
   );
 }

@@ -1,16 +1,9 @@
-import { useCallback, useMemo } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RadarStation } from "@/data/stations";
 import type { ColorStop, ReflectivityFadeSettings } from "@/lib/palPalette";
-import { paletteCacheKey } from "@/lib/palPalette";
 import { loadOdimScan, type OperaFrame } from "@/lib/operaRadar";
-import { loadPolarFrameCached } from "@/lib/polarFrameCache";
-import {
-  POLAR_GATE_PREVIEW_SIZE,
-  POLAR_GATE_STUDY_SIZE,
-  renderOdimPolarGates,
-  type PolarRenderResult,
-} from "@/lib/renderPolar";
-import PolarRadarLayer, { type PolarLoadQuality } from "./PolarRadarLayer";
+import type { OdimScanMeta } from "@/lib/renderPolar";
+import PolarSweepCanvasLayer, { type PolarSweepData } from "./PolarSweepCanvasLayer";
 
 interface Props {
   station: RadarStation;
@@ -22,6 +15,19 @@ interface Props {
   reflectivityFade?: ReflectivityFadeSettings;
 }
 
+const PREFETCH = 2;
+const scanCache = new Map<string, OdimScanMeta>();
+const MAX_SCAN_CACHE = 20;
+
+function cacheScan(url: string, scan: OdimScanMeta) {
+  scanCache.set(url, scan);
+  while (scanCache.size > MAX_SCAN_CACHE) {
+    const first = scanCache.keys().next().value;
+    if (first == null) break;
+    scanCache.delete(first);
+  }
+}
+
 export default function OperaRadarLayer({
   station,
   frames,
@@ -31,49 +37,65 @@ export default function OperaRadarLayer({
   reflectivity = true,
   reflectivityFade,
 }: Props) {
-  const palKey = useMemo(
-    () => paletteCacheKey(stops, reflectivity, reflectivityFade),
-    [stops, reflectivity, reflectivityFade],
-  );
+  const [sweep, setSweep] = useState<PolarSweepData | null>(null);
+  const framesRef = useRef(frames);
+  framesRef.current = frames;
 
-  const loadFrame = useCallback(
-    async (
-      frame: OperaFrame & { id: string },
-      quality: PolarLoadQuality = "preview",
-    ): Promise<PolarRenderResult | null> => {
-      const size = quality === "study" ? POLAR_GATE_STUDY_SIZE : POLAR_GATE_PREVIEW_SIZE;
-      const cacheKey = `opera:g3:${quality}:${frame.odimUrl}:${station.lat}:${station.lon}:${palKey}`;
-      return loadPolarFrameCached(cacheKey, async () => {
-        try {
-          const scan = await loadOdimScan(frame.odimUrl, station.lat, station.lon);
-          if (!scan) return null;
-          return renderOdimPolarGates(
-            scan,
-            stops,
-            size,
-            reflectivity,
-            reflectivityFade,
-          );
-        } catch {
-          return null;
-        }
-      });
-    },
-    [station.lat, station.lon, stops, reflectivity, reflectivityFade, palKey],
-  );
+  const activeUrl = frames[frameIndex]?.odimUrl ?? frames.at(-1)?.odimUrl ?? null;
 
-  const polarFrames = useMemo(
-    () => frames.map((f) => ({ ...f, id: f.odimUrl })),
-    [frames],
-  );
+  useEffect(() => {
+    if (!activeUrl) {
+      setSweep(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadOne = async (url: string) => {
+      const hit = scanCache.get(url);
+      if (hit) return hit;
+      try {
+        const scan = await loadOdimScan(url, station.lat, station.lon);
+        if (scan) cacheScan(url, scan);
+        return scan;
+      } catch {
+        return null;
+      }
+    };
+
+    const run = async () => {
+      const scan = await loadOne(activeUrl);
+      if (cancelled) return;
+      if (scan) setSweep({ kind: "opera", scan });
+      else setSweep(null);
+
+      const list = framesRef.current;
+      const idx = list.findIndex((f) => f.odimUrl === activeUrl);
+      if (idx < 0) return;
+      for (const delta of [1, -1, 2, -2].slice(0, PREFETCH * 2)) {
+        const frame = list[(idx + delta + list.length) % list.length];
+        if (!frame || scanCache.has(frame.odimUrl)) continue;
+        void loadOne(frame.odimUrl);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeUrl, station.lat, station.lon, frames]);
+
+  useEffect(() => {
+    setSweep(null);
+  }, [station.id]);
 
   return (
-    <PolarRadarLayer
-      frames={polarFrames}
-      frameIndex={frameIndex}
+    <PolarSweepCanvasLayer
+      sweep={sweep}
       opacity={opacity}
       stops={stops}
-      loadFrame={loadFrame}
+      reflectivity={reflectivity}
+      reflectivityFade={reflectivityFade}
     />
   );
 }

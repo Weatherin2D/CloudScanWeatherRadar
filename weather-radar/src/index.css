@@ -175,6 +175,11 @@
   image-rendering: auto;
 }
 
+.radar-polar-canvas {
+  pointer-events: none;
+  image-rendering: auto;
+}
+
 .lightning-canvas {
   pointer-events: none;
 }

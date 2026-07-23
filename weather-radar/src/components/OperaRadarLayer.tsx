@@ -43,7 +43,7 @@ export default function OperaRadarLayer({
       quality: PolarLoadQuality = "preview",
     ): Promise<PolarRenderResult | null> => {
       const size = quality === "study" ? POLAR_GATE_STUDY_SIZE : POLAR_GATE_PREVIEW_SIZE;
-      const cacheKey = `opera:g4:${quality}:${frame.odimUrl}:${station.lat}:${station.lon}:${palKey}`;
+      const cacheKey = `opera:g5:${quality}:${frame.odimUrl}:${station.lat}:${station.lon}:${palKey}`;
       return loadPolarFrameCached(cacheKey, async () => {
         try {
           const scan = await loadOdimScan(frame.odimUrl, station.lat, station.lon);

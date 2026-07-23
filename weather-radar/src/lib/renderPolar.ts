@@ -32,14 +32,14 @@ export interface PolarRenderResult {
 
 export type GeographicPolarFrame = PolarRenderResult;
 
-/** Fast first-paint polar raster (cold start / animation). */
-export const POLAR_GATE_PREVIEW_SIZE = 768;
+/** Fast first-paint geographic polar raster. */
+export const POLAR_GATE_PREVIEW_SIZE = 1024;
 
 /**
- * Study-quality polar raster. 2048 balances zoom detail vs encode/load time;
- * Leaflet ImageOverlay scales instantly on pan/zoom (no post-move redraw).
+ * Study-quality geographic raster for ImageOverlay.
+ * Painted in lat/lon space so Leaflet stretch matches the pixels (no streak warp).
  */
-export const POLAR_GATE_STUDY_SIZE = 2048;
+export const POLAR_GATE_STUDY_SIZE = 2560;
 
 /** @deprecated Prefer PREVIEW / STUDY sizes. */
 export const POLAR_GATE_MAX_SIZE = POLAR_GATE_STUDY_SIZE;
@@ -204,14 +204,9 @@ async function canvasToObjectUrl(canvas: HTMLCanvasElement): Promise<{
   dataUrl: string;
   isObjectUrl: boolean;
 }> {
+  // Lossless PNG — WebP lossy introduced streak artifacts on sparse radar alpha.
   const blob = await new Promise<Blob | null>((resolve) => {
-    canvas.toBlob((webp) => {
-      if (webp && webp.size > 0) {
-        resolve(webp);
-        return;
-      }
-      canvas.toBlob((png) => resolve(png), "image/png");
-    }, "image/webp", 0.9);
+    canvas.toBlob((b) => resolve(b), "image/png");
   });
   if (!blob) {
     return { dataUrl: canvas.toDataURL("image/png"), isObjectUrl: false };
@@ -254,75 +249,93 @@ function projectToCanvas(
 
 export async function renderLevel3PolarGates(
   layer: Level3RadialLayer,
-  _lat: number,
-  _lon: number,
+  lat: number,
+  lon: number,
   stops: ColorStop[],
   maxSize = POLAR_GATE_STUDY_SIZE,
   reflectivity = false,
   fade: ReflectivityFadeSettings = DEFAULT_REFLECTIVITY_FADE,
 ): Promise<PolarRenderResult> {
   const lut = stopsToDbzUint32LUT(stops, reflectivity, fade);
-  const bounds = level3CoverageBounds(layer, _lat, _lon);
+  const bounds = level3CoverageBounds(layer, lat, lon);
   const maxRangeKm = level3MaxRangeKm(layer);
   if (maxRangeKm <= 0) return { dataUrl: "", bounds };
 
-  const size = Math.max(256, Math.min(maxSize, POLAR_GATE_STUDY_SIZE));
+  const south = bounds[0][0];
+  const west = bounds[0][1];
+  const north = bounds[1][0];
+  const east = bounds[1][1];
+  const latSpan = Math.max(0.01, north - south);
+  const lonSpan = Math.max(0.01, east - west);
+  const { width, height } = geographicCanvasSize(lat, latSpan, lonSpan, maxSize);
   const quality: "preview" | "study" =
-    size >= POLAR_GATE_STUDY_SIZE * 0.75 ? "study" : "preview";
+    Math.max(width, height) >= POLAR_GATE_STUDY_SIZE * 0.75 ? "study" : "preview";
+
   const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) return { dataUrl: "", bounds };
 
-  const imageData = ctx.createImageData(size, size);
-  const buf = new Uint32Array(
-    imageData.data.buffer,
-    imageData.data.byteOffset,
-    size * size,
-  );
+  ctx.clearRect(0, 0, width, height);
+  ctx.imageSmoothingEnabled = false;
 
-  const cx = (size - 1) / 2;
-  const cy = (size - 1) / 2;
-  const pxPerKm = (size / 2 - 2) / maxRangeKm;
   const binLimit = level3BinCount(layer);
+  const project = (gLat: number, gLon: number) =>
+    projectToCanvas(gLat, gLon, north, west, latSpan, lonSpan, width, height);
 
-  const polarXY = (azDeg: number, rangeKm: number): [number, number] => {
-    const rad = azDeg * DEG;
-    const d = rangeKm * pxPerKm;
-    return [cx + Math.sin(rad) * d, cy - Math.cos(rad) * d];
-  };
+  // Slight azimuth overlap closes hairline gaps between radials
+  const AZ_OVERLAP = 0.08;
 
   for (let ri = 0; ri < layer.radials.length; ri++) {
-    if (quality === "study" && ri > 0 && ri % 24 === 0) {
+    if (quality === "study" && ri > 0 && ri % 32 === 0) {
       await Promise.resolve();
     }
     const radial = layer.radials[ri]!;
-    const [az0, az1] = radialAzimuthSpan(radial, ri, layer);
+    let [az0, az1] = radialAzimuthSpan(radial, ri, layer);
+    az0 -= AZ_OVERLAP;
+    az1 += AZ_OVERLAP;
     const binsInRadial = Math.min(radial.bins.length, binLimit);
 
     for (let b = binsInRadial - 1; b >= 0; b--) {
       const val = radial.bins[b];
       if (val == null) continue;
 
-      const color = lut[dbzToLutIndex(val)]!;
-      if ((color >>> 24) === 0) continue;
+      const packed = lut[dbzToLutIndex(val)]!;
+      const a = (packed >>> 24) & 255;
+      if (a === 0) continue;
+      const r = packed & 255;
+      const g = (packed >>> 8) & 255;
+      const bl = (packed >>> 16) & 255;
 
       const [r0, r1] = level3BinRangeKm(layer, b);
       if (r1 <= 0 || r0 >= maxRangeKm) continue;
       const outer = Math.min(r1, maxRangeKm);
-      if (outer <= r0) continue;
+      // Tiny range overlap prevents concentric hairline rings
+      const inner = Math.max(0, r0 - 0.02);
+      if (outer <= inner) continue;
 
-      const [x1, y1] = polarXY(az0, r0);
-      const [x2, y2] = polarXY(az1, r0);
-      const [x3, y3] = polarXY(az1, outer);
-      const [x4, y4] = polarXY(az0, outer);
+      const p1 = destination(lat, lon, az0, inner);
+      const p2 = destination(lat, lon, az1, inner);
+      const p3 = destination(lat, lon, az1, outer);
+      const p4 = destination(lat, lon, az0, outer);
 
-      fillConvexQuad(buf, size, size, x1, y1, x2, y2, x3, y3, x4, y4, color);
+      const [x1, y1] = project(p1.lat, p1.lon);
+      const [x2, y2] = project(p2.lat, p2.lon);
+      const [x3, y3] = project(p3.lat, p3.lon);
+      const [x4, y4] = project(p4.lat, p4.lon);
+
+      ctx.fillStyle = `rgba(${r},${g},${bl},${(a / 255).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.lineTo(x3, y3);
+      ctx.lineTo(x4, y4);
+      ctx.closePath();
+      ctx.fill();
     }
   }
 
-  ctx.putImageData(imageData, 0, 0);
   const encoded = await canvasToObjectUrl(canvas);
   return {
     dataUrl: encoded.dataUrl,
@@ -332,7 +345,7 @@ export async function renderLevel3PolarGates(
   };
 }
 
-/** Render ODIM SCAN as native polar range gates. */
+/** Render ODIM SCAN as native polar range gates in geographic ImageOverlay space. */
 export async function renderOdimPolarGates(
   scan: OdimScanMeta,
   stops: ColorStop[],
@@ -342,69 +355,82 @@ export async function renderOdimPolarGates(
 ): Promise<PolarRenderResult> {
   const lut = stopsToDbzUint32LUT(stops, reflectivity, fade);
   const bounds = odimCoverageBounds(scan);
-  const { nbins, nrays, rstart, rscale, a1gate, values, nodata, undetect, gain, offset } =
+  const { lat, lon, nbins, nrays, rstart, rscale, a1gate, values, nodata, undetect, gain, offset } =
     scan;
   const maxRangeKm = Math.max(1, (rstart + nbins * rscale) / 1000);
 
-  const size = Math.max(256, Math.min(maxSize, POLAR_GATE_STUDY_SIZE));
+  const south = bounds[0][0];
+  const west = bounds[0][1];
+  const north = bounds[1][0];
+  const east = bounds[1][1];
+  const latSpan = Math.max(0.01, north - south);
+  const lonSpan = Math.max(0.01, east - west);
+  const { width, height } = geographicCanvasSize(lat, latSpan, lonSpan, maxSize);
   const quality: "preview" | "study" =
-    size >= POLAR_GATE_STUDY_SIZE * 0.75 ? "study" : "preview";
+    Math.max(width, height) >= POLAR_GATE_STUDY_SIZE * 0.75 ? "study" : "preview";
+
   const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) return { dataUrl: "", bounds };
 
-  const imageData = ctx.createImageData(size, size);
-  const buf = new Uint32Array(
-    imageData.data.buffer,
-    imageData.data.byteOffset,
-    size * size,
-  );
+  ctx.clearRect(0, 0, width, height);
+  ctx.imageSmoothingEnabled = false;
 
-  const cx = (size - 1) / 2;
-  const cy = (size - 1) / 2;
-  const pxPerKm = (size / 2 - 2) / maxRangeKm;
   const azStep = nrays > 0 ? 360 / nrays : 1;
-
-  const polarXY = (azDeg: number, rangeKm: number): [number, number] => {
-    const rad = azDeg * DEG;
-    const d = rangeKm * pxPerKm;
-    return [cx + Math.sin(rad) * d, cy - Math.cos(rad) * d];
-  };
+  const AZ_OVERLAP = azStep * 0.08;
+  const project = (gLat: number, gLon: number) =>
+    projectToCanvas(gLat, gLon, north, west, latSpan, lonSpan, width, height);
 
   for (let ray = 0; ray < nrays; ray++) {
-    if (quality === "study" && ray > 0 && ray % 24 === 0) {
+    if (quality === "study" && ray > 0 && ray % 32 === 0) {
       await Promise.resolve();
     }
     const az = (a1gate + ray * azStep) % 360;
-    const az0 = az - azStep / 2;
-    const az1 = az + azStep / 2;
+    const az0 = az - azStep / 2 - AZ_OVERLAP;
+    const az1 = az + azStep / 2 + AZ_OVERLAP;
 
     for (let bin = nbins - 1; bin >= 0; bin--) {
       const raw = values[ray * nbins + bin];
       if (raw === nodata || raw === undetect || Number.isNaN(raw)) continue;
       const val = raw * gain + offset;
 
-      const color = lut[dbzToLutIndex(val)]!;
-      if ((color >>> 24) === 0) continue;
+      const packed = lut[dbzToLutIndex(val)]!;
+      const a = (packed >>> 24) & 255;
+      if (a === 0) continue;
+      const r = packed & 255;
+      const g = (packed >>> 8) & 255;
+      const bl = (packed >>> 16) & 255;
 
       const r0 = (rstart + bin * rscale) / 1000;
       const r1 = (rstart + (bin + 1) * rscale) / 1000;
       if (r1 <= 0 || r0 >= maxRangeKm) continue;
       const outer = Math.min(r1, maxRangeKm);
-      if (outer <= r0) continue;
+      const inner = Math.max(0, r0 - 0.02);
+      if (outer <= inner) continue;
 
-      const [x1, y1] = polarXY(az0, r0);
-      const [x2, y2] = polarXY(az1, r0);
-      const [x3, y3] = polarXY(az1, outer);
-      const [x4, y4] = polarXY(az0, outer);
+      const p1 = destination(lat, lon, az0, inner);
+      const p2 = destination(lat, lon, az1, inner);
+      const p3 = destination(lat, lon, az1, outer);
+      const p4 = destination(lat, lon, az0, outer);
 
-      fillConvexQuad(buf, size, size, x1, y1, x2, y2, x3, y3, x4, y4, color);
+      const [x1, y1] = project(p1.lat, p1.lon);
+      const [x2, y2] = project(p2.lat, p2.lon);
+      const [x3, y3] = project(p3.lat, p3.lon);
+      const [x4, y4] = project(p4.lat, p4.lon);
+
+      ctx.fillStyle = `rgba(${r},${g},${bl},${(a / 255).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.lineTo(x3, y3);
+      ctx.lineTo(x4, y4);
+      ctx.closePath();
+      ctx.fill();
     }
   }
 
-  ctx.putImageData(imageData, 0, 0);
   const encoded = await canvasToObjectUrl(canvas);
   return {
     dataUrl: encoded.dataUrl,

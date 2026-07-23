@@ -1,4 +1,4 @@
-# Global Weather Watch
+# CloudScan
 
 Interactive weather radar viewer with global composite imagery, per-station NEXRAD/OPERA products, lightning, and map drawing tools.
 

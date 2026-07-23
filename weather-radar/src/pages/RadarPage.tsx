@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
+import { Link } from "wouter";
 import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import {
-  Cloud, Play, Pause, ChevronLeft, ChevronRight, Clock,
+  Play, Pause, ChevronLeft, ChevronRight, Clock,
   Layers, Zap, Radio, Map, X, Info, Settings, Palette, AlertTriangle, Pencil, ShieldAlert,
-  BarChart3, LayoutPanelTop, Globe2, Satellite, CloudRain, Crosshair,
+  BarChart3, LayoutPanelTop, Globe2, Satellite, CloudRain, Crosshair, Wrench,
 } from "lucide-react";
+import CloudScanMark from "@/components/CloudScanMark";
 import {
   ALL_STATIONS,
   STATION_RADAR_PRODUCTS,
@@ -893,6 +895,7 @@ export default function RadarPage() {
   const [filterCountry, setFilterCountry] = useState<string>("all");
   const [legendVisible, setLegendVisible] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [toolsExpanded, setToolsExpanded] = useState(false);
   const [settings, setSettings]         = useState<AppSettings>(DEFAULT_SETTINGS);
   const [stationRadarStatus, setStationRadarStatus] = useState<StationRadarStatus>("idle");
   const [drawMode, setDrawMode] = useState(false);
@@ -1557,173 +1560,197 @@ export default function RadarPage() {
     mode === "station" ? (selectedProduct.legendMax ?? "Heavy") : "Heavy";
 
   return (
-    <div className="flex flex-col h-screen bg-gray-950 text-white overflow-hidden">
+    <div className="flex flex-col h-screen bg-ink text-white overflow-hidden font-sans">
 
       {/* ─── Header ─────────────────────────────────────────────────────── */}
-      <header className="relative flex flex-wrap items-center gap-1.5 sm:gap-2 px-3 py-2 bg-gray-900 border-b border-gray-800 z-[1000] flex-shrink-0">
-        {/* Logo + mode toggle row (always visible) */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          <Cloud className="w-5 h-5 text-blue-400 flex-shrink-0" />
-          <span className="font-bold tracking-tight hidden sm:block">CloudScan</span>
-        </div>
-        <div className="w-px h-5 bg-gray-700 mx-1 hidden sm:block" />
+      <header className="relative z-[1000] flex flex-shrink-0 flex-wrap items-center gap-1.5 border-b border-ink-border bg-ink-elevated/95 px-3 py-2 backdrop-blur-sm sm:gap-2">
+        <Link
+          href="/"
+          className="flex items-center gap-1.5 text-radar-cyan transition-opacity hover:opacity-90 sm:gap-2"
+          title="CloudScan home"
+        >
+          <CloudScanMark className="h-5 w-5 flex-shrink-0" />
+          <span className="font-display text-sm font-bold tracking-tight text-white">CloudScan</span>
+        </Link>
+        <div className="mx-1 hidden h-5 w-px bg-ink-border sm:block" />
 
         {/* Mode toggle */}
-        <div className="flex gap-0.5 bg-gray-800 rounded-lg p-1">
+        <div className="flex gap-0.5 rounded-lg bg-ink/80 p-1 ring-1 ring-ink-border">
           <button onClick={() => { setMode("overview"); setSelectedAlert(null); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-md text-sm font-medium transition-all ${mode === "overview" ? "bg-blue-600 text-white" : "text-gray-400 hover:text-white hover:bg-gray-700"}`}>
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-all sm:px-2.5 sm:py-1 ${mode === "overview" ? "bg-radar-cyan text-ink" : "text-gray-400 hover:bg-white/5 hover:text-white"}`}>
             <Map className="w-3.5 h-3.5" /><span>Global</span>
           </button>
           <button onClick={() => { setMode("station"); setSelectedAlert(null); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-md text-sm font-medium transition-all ${mode === "station" ? "bg-blue-600 text-white" : "text-gray-400 hover:text-white hover:bg-gray-700"}`}>
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-all sm:px-2.5 sm:py-1 ${mode === "station" ? "bg-radar-cyan text-ink" : "text-gray-400 hover:bg-white/5 hover:text-white"}`}>
             <Radio className="w-3.5 h-3.5" /><span>Station</span>
           </button>
           <button onClick={handleEnterAlertsMode}
-            className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-md text-sm font-medium transition-all ${mode === "alerts" ? "bg-red-600 text-white" : "text-gray-400 hover:text-white hover:bg-gray-700"}`}>
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-all sm:px-2.5 sm:py-1 ${mode === "alerts" ? "bg-red-600 text-white" : "text-gray-400 hover:bg-white/5 hover:text-white"}`}>
             <ShieldAlert className="w-3.5 h-3.5" /><span>Alerts</span>
           </button>
           <button onClick={handleEnterModelsMode}
-            className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-md text-sm font-medium transition-all ${mode === "models" ? "bg-orange-600 text-white" : "text-gray-400 hover:text-white hover:bg-gray-700"}`}>
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-all sm:px-2.5 sm:py-1 ${mode === "models" ? "bg-orange-600 text-white" : "text-gray-400 hover:bg-white/5 hover:text-white"}`}>
             <Globe2 className="w-3.5 h-3.5" /><span className="hidden md:inline">Weather Models</span><span className="md:hidden">Models</span>
           </button>
         </div>
 
-        {/* Lightning toggle */}
-        <button onClick={() => setLightningEnabled(v => !v)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-lg text-sm font-medium border transition-all ${lightningEnabled ? "bg-yellow-500/20 border-yellow-500/60 text-yellow-300" : "border-gray-700 text-gray-400 hover:text-white hover:bg-gray-800"}`}>
-          <Zap className="w-3.5 h-3.5" />
-          <span className="hidden sm:block">Lightning</span>
-          {lightningEnabled && strikes.length > 0 && (
-            <span className="bg-yellow-500/30 text-yellow-300 text-xs px-1.5 rounded-full">{strikes.length.toLocaleString()}</span>
-          )}
-        </button>
-
-        {/* Satellite underlay (GOES visible + radar on top) */}
+        {/* Tools: collapsed behind a toggle on small screens */}
         <button
-          onClick={() => setSatelliteOverlayEnabled(v => !v)}
-          disabled={mode === "models"}
-          className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-lg text-sm font-medium border transition-all ${
-            satelliteOverlayEnabled
-              ? "bg-sky-500/20 border-sky-500/60 text-sky-300"
-              : "border-gray-700 text-gray-400 hover:text-white hover:bg-gray-800"
-          } ${mode === "models" ? "opacity-40 pointer-events-none" : ""}`}
+          type="button"
+          onClick={() => setToolsExpanded((v) => !v)}
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-all lg:hidden sm:px-2.5 sm:py-1 ${
+            toolsExpanded
+              ? "border-radar-cyan/50 bg-radar-cyan/15 text-radar-cyan"
+              : "border-ink-border text-gray-400 hover:bg-white/5 hover:text-white"
+          }`}
+          aria-expanded={toolsExpanded}
+          aria-controls="radar-tools"
         >
-          <Satellite className="w-3.5 h-3.5" />
-          <span className="hidden sm:block">Satellite</span>
+          <Wrench className="h-3.5 w-3.5" />
+          <span>Tools</span>
         </button>
 
-        {/* Global radar composite toggle */}
-        {(mode === "overview" || mode === "alerts") && (
-          <button
-            onClick={() => setGlobalRadarEnabled(v => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-lg text-sm font-medium border transition-all ${
-              globalRadarEnabled
-                ? "bg-blue-500/20 border-blue-500/60 text-blue-300"
-                : "border-gray-700 text-gray-400 hover:text-white hover:bg-gray-800"
-            }`}
-          >
-            <CloudRain className="w-3.5 h-3.5" />
-            <span className="hidden sm:block">Radar</span>
+        <div
+          id="radar-tools"
+          className={`${toolsExpanded ? "flex" : "hidden"} w-full flex-wrap items-center gap-1.5 lg:flex lg:w-auto`}
+        >
+          {/* Lightning toggle */}
+          <button onClick={() => setLightningEnabled(v => !v)}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-all sm:px-2.5 sm:py-1 ${lightningEnabled ? "border-yellow-500/60 bg-yellow-500/20 text-yellow-300" : "border-ink-border text-gray-400 hover:bg-white/5 hover:text-white"}`}>
+            <Zap className="w-3.5 h-3.5" />
+            <span className="hidden sm:block">Lightning</span>
+            {lightningEnabled && strikes.length > 0 && (
+              <span className="rounded-full bg-yellow-500/30 px-1.5 font-mono text-xs text-yellow-300">{strikes.length.toLocaleString()}</span>
+            )}
           </button>
-        )}
 
-        {/* Map type */}
-        <button onClick={() => setMapType(t => t === "dark" ? "satellite" : "dark")}
-          title={mapType === "dark" ? "Switch to satellite basemap" : "Switch to dark basemap"}
-          className="flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-800 border border-gray-700 transition-all">
-          <Layers className="w-3.5 h-3.5" />
-          <span className="hidden sm:block">Map</span>
-        </button>
+          {/* Satellite underlay (GOES visible + radar on top) */}
+          <button
+            onClick={() => setSatelliteOverlayEnabled(v => !v)}
+            disabled={mode === "models"}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-all sm:px-2.5 sm:py-1 ${
+              satelliteOverlayEnabled
+                ? "border-sky-500/60 bg-sky-500/20 text-sky-300"
+                : "border-ink-border text-gray-400 hover:bg-white/5 hover:text-white"
+            } ${mode === "models" ? "opacity-40 pointer-events-none" : ""}`}
+          >
+            <Satellite className="w-3.5 h-3.5" />
+            <span className="hidden sm:block">Satellite</span>
+          </button>
 
-        {/* Draw */}
-        <button
-          onClick={() => setDrawMode(v => !v)}
-          disabled={mode === "models" || crossSectionMode || probeMode}
-          className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-lg text-sm border transition-all ${
-            drawMode
-              ? "bg-amber-500/20 border-amber-500/60 text-amber-300"
-              : "text-gray-400 hover:text-white hover:bg-gray-800 border-gray-700"
-          } ${mode === "models" || crossSectionMode || probeMode ? "opacity-40 pointer-events-none" : ""}`}
-        >
-          <Pencil className="w-3.5 h-3.5" />
-          <span className="hidden sm:block">Draw</span>
-        </button>
+          {/* Global radar composite toggle */}
+          {(mode === "overview" || mode === "alerts") && (
+            <button
+              onClick={() => setGlobalRadarEnabled(v => !v)}
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-all sm:px-2.5 sm:py-1 ${
+                globalRadarEnabled
+                  ? "border-radar-cyan/60 bg-radar-cyan/20 text-radar-cyan"
+                  : "border-ink-border text-gray-400 hover:bg-white/5 hover:text-white"
+              }`}
+            >
+              <CloudRain className="w-3.5 h-3.5" />
+              <span className="hidden sm:block">Radar</span>
+            </button>
+          )}
 
-        <button
-          onClick={toggleProbeTool}
-          disabled={!probeAvailable}
-          title={
-            probeAvailable
-              ? "Move cursor over the map to inspect radar values"
-              : "Pixel probe is unavailable in split view or Weather Models mode"
-          }
-          className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-lg text-sm border transition-all ${
-            probeMode
-              ? "bg-cyan-500/20 border-cyan-500/60 text-cyan-300"
-              : "text-gray-400 hover:text-white hover:bg-gray-800 border-gray-700"
-          } ${!probeAvailable ? "opacity-40 pointer-events-none" : ""}`}
-        >
-          <Crosshair className="w-3.5 h-3.5" />
-          <span className="hidden sm:block">Probe</span>
-        </button>
+          {/* Map type */}
+          <button onClick={() => setMapType(t => t === "dark" ? "satellite" : "dark")}
+            title={mapType === "dark" ? "Switch to satellite basemap" : "Switch to dark basemap"}
+            className="flex items-center gap-1.5 rounded-lg border border-ink-border px-3 py-1.5 text-sm text-gray-400 transition-all hover:bg-white/5 hover:text-white sm:px-2.5 sm:py-1">
+            <Layers className="w-3.5 h-3.5" />
+            <span className="hidden sm:block">Map</span>
+          </button>
 
-        <button
-          onClick={toggleCrossSectionTool}
-          disabled={!crossSectionAvailable}
-          title={
-            crossSectionAvailable
-              ? "Draw a line for a vertical radar slice (RHI)"
-              : "Cross-section requires Station or Weather Models mode"
-          }
-          className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-lg text-sm border transition-all ${
-            crossSectionMode
-              ? "bg-amber-500/20 border-amber-500/60 text-amber-300"
-              : "text-gray-400 hover:text-white hover:bg-gray-800 border-gray-700"
-          } ${!crossSectionAvailable ? "opacity-40 pointer-events-none" : ""}`}
-        >
-          <BarChart3 className="w-3.5 h-3.5" />
-          <span className="hidden sm:block">Cross-section</span>
-        </button>
-        <button
-          onClick={cycleSplitLayout}
-          disabled={!splitViewAvailable}
-          title={
-            splitViewAvailable
-              ? `Split view: ${splitLayout === "single" ? "single pane" : splitLayout === "2v" ? "2 columns" : splitLayout === "2h" ? "2 rows" : "4 panes"}`
-              : "Split view requires a selected station"
-          }
-          className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-lg text-sm border transition-all ${
-            splitLayout !== "single"
-              ? "bg-blue-500/20 border-blue-500/60 text-blue-300"
-              : "text-gray-400 hover:text-white hover:bg-gray-800 border-gray-700"
-          } ${!splitViewAvailable ? "opacity-40 pointer-events-none" : ""}`}
-        >
-          <LayoutPanelTop className="w-3.5 h-3.5" />
-          <span className="hidden sm:block">
-            {splitLayout === "single" ? "Split view" : splitLayout === "2v" ? "2 cols" : splitLayout === "2h" ? "2 rows" : "4 panes"}
-          </span>
-        </button>
+          {/* Draw */}
+          <button
+            onClick={() => setDrawMode(v => !v)}
+            disabled={mode === "models" || crossSectionMode || probeMode}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-all sm:px-2.5 sm:py-1 ${
+              drawMode
+                ? "border-amber-500/60 bg-amber-500/20 text-amber-300"
+                : "border-ink-border text-gray-400 hover:bg-white/5 hover:text-white"
+            } ${mode === "models" || crossSectionMode || probeMode ? "opacity-40 pointer-events-none" : ""}`}
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            <span className="hidden sm:block">Draw</span>
+          </button>
+
+          <button
+            onClick={toggleProbeTool}
+            disabled={!probeAvailable}
+            title={
+              probeAvailable
+                ? "Move cursor over the map to inspect radar values"
+                : "Pixel probe is unavailable in split view or Weather Models mode"
+            }
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-all sm:px-2.5 sm:py-1 ${
+              probeMode
+                ? "border-cyan-500/60 bg-cyan-500/20 text-cyan-300"
+                : "border-ink-border text-gray-400 hover:bg-white/5 hover:text-white"
+            } ${!probeAvailable ? "opacity-40 pointer-events-none" : ""}`}
+          >
+            <Crosshair className="w-3.5 h-3.5" />
+            <span className="hidden sm:block">Probe</span>
+          </button>
+
+          <button
+            onClick={toggleCrossSectionTool}
+            disabled={!crossSectionAvailable}
+            title={
+              crossSectionAvailable
+                ? "Draw a line for a vertical radar slice (RHI)"
+                : "Cross-section requires Station or Weather Models mode"
+            }
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-all sm:px-2.5 sm:py-1 ${
+              crossSectionMode
+                ? "border-amber-500/60 bg-amber-500/20 text-amber-300"
+                : "border-ink-border text-gray-400 hover:bg-white/5 hover:text-white"
+            } ${!crossSectionAvailable ? "opacity-40 pointer-events-none" : ""}`}
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+            <span className="hidden sm:block">Cross-section</span>
+          </button>
+          <button
+            onClick={cycleSplitLayout}
+            disabled={!splitViewAvailable}
+            title={
+              splitViewAvailable
+                ? `Split view: ${splitLayout === "single" ? "single pane" : splitLayout === "2v" ? "2 columns" : splitLayout === "2h" ? "2 rows" : "4 panes"}`
+                : "Split view requires a selected station"
+            }
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-all sm:px-2.5 sm:py-1 ${
+              splitLayout !== "single"
+                ? "border-radar-cyan/60 bg-radar-cyan/20 text-radar-cyan"
+                : "border-ink-border text-gray-400 hover:bg-white/5 hover:text-white"
+            } ${!splitViewAvailable ? "opacity-40 pointer-events-none" : ""}`}
+          >
+            <LayoutPanelTop className="w-3.5 h-3.5" />
+            <span className="hidden sm:block">
+              {splitLayout === "single" ? "Split view" : splitLayout === "2v" ? "2 cols" : splitLayout === "2h" ? "2 rows" : "4 panes"}
+            </span>
+          </button>
+        </div>
 
         {/* Settings */}
         <button onClick={() => setSettingsOpen(v => !v)}
-          className={`ml-auto flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-lg text-sm border transition-all ${settingsOpen ? "bg-gray-700 border-gray-500 text-white" : "text-gray-400 hover:text-white hover:bg-gray-800 border-gray-700"}`}>
+          className={`ml-auto flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-all sm:px-2.5 sm:py-1 ${settingsOpen ? "border-white/30 bg-white/10 text-white" : "border-ink-border text-gray-400 hover:bg-white/5 hover:text-white"}`}>
           <Settings className="w-3.5 h-3.5" />
           <span className="hidden sm:block">Settings</span>
         </button>
 
         {/* Per-station product menu — wraps to new row on mobile */}
         {mode === "station" && selectedStation && stationProductList.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 w-full sm:w-auto">
-            <div className="flex gap-0.5 bg-gray-800 rounded-lg p-1 border border-gray-700 overflow-x-auto">
+          <div className="flex w-full flex-wrap gap-1.5 sm:w-auto">
+            <div className="flex gap-0.5 overflow-x-auto rounded-lg border border-ink-border bg-ink/80 p-1">
               {stationProductList.map((p) => (
                 <button
                   key={p.id}
                   onClick={() => handleProductChange(p)}
                   title={p.description}
-                  className={`px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-md text-xs font-semibold transition-all flex-shrink-0 ${
+                  className={`flex-shrink-0 rounded-md px-3 py-1.5 text-xs font-semibold transition-all sm:px-2.5 sm:py-1 ${
                     selectedProduct.id === p.id
                       ? "text-white shadow-sm"
-                      : "text-gray-400 hover:text-white hover:bg-gray-700"
+                      : "text-gray-400 hover:bg-white/5 hover:text-white"
                   }`}
                   style={selectedProduct.id === p.id ? { backgroundColor: p.color + "cc" } : undefined}
                 >
@@ -1732,16 +1759,16 @@ export default function RadarPage() {
               ))}
             </div>
             {productSupportsTilt(selectedProduct) && stationTilts.length > 0 && (
-              <div className="flex gap-0.5 bg-gray-800 rounded-lg p-1 border border-gray-700 overflow-x-auto">
+              <div className="flex gap-0.5 overflow-x-auto rounded-lg border border-ink-border bg-ink/80 p-1">
                 {stationTilts.map((t) => (
                   <button
                     key={t.index}
                     onClick={() => handleTiltChange(t.index)}
                     title={t.description}
-                    className={`px-2.5 py-1.5 sm:px-2 sm:py-1 rounded-md text-xs font-semibold transition-all flex-shrink-0 ${
+                    className={`flex-shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-all sm:px-2 sm:py-1 ${
                       selectedTilt === t.index
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "text-gray-400 hover:text-white hover:bg-gray-700"
+                        ? "bg-radar-cyan text-ink shadow-sm"
+                        : "text-gray-400 hover:bg-white/5 hover:text-white"
                     }`}
                   >
                     {t.label}

@@ -1,3 +1,14 @@
 <svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="180" height="180" rx="36" fill="#FF3C00"/>
+  <rect width="180" height="180" rx="36" fill="#0B1220"/>
+  <circle cx="90" cy="90" r="62" stroke="#1A2A3A" stroke-width="2" fill="none"/>
+  <circle cx="90" cy="90" r="42" stroke="#1A2A3A" stroke-width="1.5" fill="none"/>
+  <circle cx="90" cy="90" r="22" stroke="#1A2A3A" stroke-width="1.5" fill="none"/>
+  <path d="M90 90 L90 28 A62 62 0 0 1 148 110 Z" fill="url(#sweep)" opacity="0.9"/>
+  <circle cx="90" cy="90" r="5" fill="#2DD4BF"/>
+  <defs>
+    <linearGradient id="sweep" x1="90" y1="28" x2="148" y2="110" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2DD4BF" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#2DD4BF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
 </svg>

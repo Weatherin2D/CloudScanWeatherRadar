@@ -11,6 +11,16 @@
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
 
+  --color-brand: hsl(var(--brand));
+  --color-brand-foreground: hsl(var(--brand-foreground));
+  --color-radar-cyan: hsl(var(--radar-cyan));
+  --color-radar-cyan-dim: hsl(var(--radar-cyan-dim));
+  --color-ink: hsl(var(--ink));
+  --color-ink-elevated: hsl(var(--ink-elevated));
+  --color-ink-border: hsl(var(--ink-border));
+
+  --font-display: var(--app-font-display);
+
   --color-card: hsl(var(--card));
   --color-card-foreground: hsl(var(--card-foreground));
   --color-card-border: hsl(var(--card-border));
@@ -83,36 +93,46 @@
   --sidebar: 222 47% 7%;
   --sidebar-foreground: 210 40% 90%;
   --sidebar-border: 217 33% 18%;
-  --sidebar-primary: 217 91% 60%;
-  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-primary: 174 72% 51%;
+  --sidebar-primary-foreground: 222 47% 5%;
   --sidebar-accent: 222 47% 12%;
   --sidebar-accent-foreground: 210 40% 90%;
-  --sidebar-ring: 217 91% 60%;
+  --sidebar-ring: 174 72% 51%;
   --popover: 222 47% 8%;
   --popover-foreground: 210 40% 95%;
   --popover-border: 217 33% 20%;
-  --primary: 217 91% 60%;
-  --primary-foreground: 0 0% 100%;
+  --primary: 174 72% 51%;
+  --primary-foreground: 222 47% 5%;
   --secondary: 222 47% 14%;
   --secondary-foreground: 210 40% 90%;
   --muted: 222 47% 12%;
   --muted-foreground: 215 20% 55%;
-  --accent: 217 91% 60%;
-  --accent-foreground: 0 0% 100%;
+  --accent: 174 72% 51%;
+  --accent-foreground: 222 47% 5%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
   --input: 217 33% 22%;
-  --ring: 217 91% 60%;
-  --chart-1: 217 91% 60%;
+  --ring: 174 72% 51%;
+  --chart-1: 174 72% 51%;
   --chart-2: 160 84% 39%;
   --chart-3: 30 95% 55%;
   --chart-4: 280 65% 60%;
   --chart-5: 340 75% 55%;
 
-  --app-font-sans: 'Inter', sans-serif;
+  --app-font-sans: 'IBM Plex Sans', sans-serif;
   --app-font-serif: Georgia, serif;
-  --app-font-mono: Menlo, monospace;
+  --app-font-mono: 'IBM Plex Mono', monospace;
+  --app-font-display: 'Syne', sans-serif;
   --radius: .5rem;
+
+  /* CloudScan brand */
+  --brand: 174 72% 51%;
+  --brand-foreground: 222 47% 5%;
+  --radar-cyan: 174 72% 51%;
+  --radar-cyan-dim: 174 50% 28%;
+  --ink: 222 47% 5%;
+  --ink-elevated: 222 40% 9%;
+  --ink-border: 215 25% 18%;
 
   --shadow-2xs: 0 1px 3px rgba(0,0,0,0.4);
   --shadow-xs: 0 1px 3px rgba(0,0,0,0.4);
@@ -319,4 +339,64 @@
   background: transparent;
   border: none;
   pointer-events: none;
+}
+
+/* ─── CloudScan landing ─────────────────────────────────────────────────── */
+@keyframes cs-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cs-kenburns {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.08);
+  }
+}
+
+@keyframes cs-sweep {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cs-rise {
+  animation: cs-rise 0.85s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.cs-rise-delay-1 {
+  animation-delay: 0.12s;
+}
+
+.cs-rise-delay-2 {
+  animation-delay: 0.24s;
+}
+
+.cs-rise-delay-3 {
+  animation-delay: 0.36s;
+}
+
+.cs-hero-media {
+  animation: cs-kenburns 28s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+.cs-sweep-ring {
+  animation: cs-sweep 12s linear infinite;
+  transform-origin: center;
+}
+
+.font-display {
+  font-family: var(--app-font-display);
 }

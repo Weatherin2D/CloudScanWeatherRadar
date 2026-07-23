@@ -44,7 +44,7 @@ export default function Level3RadarLayer({
       quality: PolarLoadQuality = "preview",
     ): Promise<PolarRenderResult | null> => {
       const size = quality === "study" ? POLAR_GATE_STUDY_SIZE : POLAR_GATE_PREVIEW_SIZE;
-      const cacheKey = `l3:g7:${quality}:${frame.key}:${palKey}`;
+      const cacheKey = `l3:g8:${quality}:${frame.key}:${palKey}`;
       return loadPolarFrameCached(cacheKey, async () => {
         const parsed = await loadParsedLevel3(frame.key, level3ObjectUrl(frame.key));
         if (!parsed) return null;

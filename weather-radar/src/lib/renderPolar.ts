@@ -32,14 +32,14 @@ export interface PolarRenderResult {
 
 export type GeographicPolarFrame = PolarRenderResult;
 
-/** Fast first-paint geographic polar raster. */
-export const POLAR_GATE_PREVIEW_SIZE = 1024;
+/** Fast first-paint polar raster (shown immediately). */
+export const POLAR_GATE_PREVIEW_SIZE = 768;
 
 /**
- * Study-quality geographic raster for ImageOverlay.
- * Gate wedges painted as hard pixels (RadarScope-style clean gates).
+ * Study-quality polar raster for ImageOverlay.
+ * Polar-space paint is much faster than geographic wedges and stays solid when zoomed.
  */
-export const POLAR_GATE_STUDY_SIZE = 3072;
+export const POLAR_GATE_STUDY_SIZE = 2048;
 
 /** @deprecated Prefer PREVIEW / STUDY sizes. */
 export const POLAR_GATE_MAX_SIZE = POLAR_GATE_STUDY_SIZE;
@@ -265,9 +265,7 @@ function fillConvexQuad(
   }
 }
 
-/**
- * Paint Level-III as hard geographic gate wedges (clean pixels, no bilinear smear).
- */
+/** Paint Level-III gates in polar space (fast, solid disk) for ImageOverlay. */
 export async function renderLevel3PolarGates(
   layer: Level3RadialLayer,
   lat: number,
@@ -282,39 +280,38 @@ export async function renderLevel3PolarGates(
   const maxRangeKm = level3MaxRangeKm(layer);
   if (maxRangeKm <= 0) return { dataUrl: "", bounds };
 
-  const south = bounds[0][0];
-  const west = bounds[0][1];
-  const north = bounds[1][0];
-  const east = bounds[1][1];
-  const latSpan = Math.max(0.01, north - south);
-  const lonSpan = Math.max(0.01, east - west);
-  const { width, height } = geographicCanvasSize(lat, latSpan, lonSpan, maxSize);
+  const size = Math.max(256, Math.min(maxSize, POLAR_GATE_STUDY_SIZE));
   const quality: "preview" | "study" =
-    Math.max(width, height) >= POLAR_GATE_STUDY_SIZE * 0.75 ? "study" : "preview";
+    size >= POLAR_GATE_STUDY_SIZE * 0.75 ? "study" : "preview";
 
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = size;
+  canvas.height = size;
   const ctx = canvas.getContext("2d");
   if (!ctx) return { dataUrl: "", bounds };
 
-  const imageData = ctx.createImageData(width, height);
+  const imageData = ctx.createImageData(size, size);
   const buf = new Uint32Array(
     imageData.data.buffer,
     imageData.data.byteOffset,
-    width * height,
+    size * size,
   );
 
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+  const pxPerKm = (size / 2 - 2) / maxRangeKm;
   const binLimit = level3BinCount(layer);
-  const project = (gLat: number, gLon: number) =>
-    projectToCanvas(gLat, gLon, north, west, latSpan, lonSpan, width, height);
+  const AZ_OVERLAP = 0.08;
+  const RANGE_OVERLAP_KM = 0.03;
 
-  // Overlap closes hairline seams between adjacent radials / range rings
-  const AZ_OVERLAP = 0.12;
-  const RANGE_OVERLAP_KM = 0.04;
+  const polarXY = (azDeg: number, rangeKm: number): [number, number] => {
+    const rad = azDeg * DEG;
+    const d = rangeKm * pxPerKm;
+    return [cx + Math.sin(rad) * d, cy - Math.cos(rad) * d];
+  };
 
   for (let ri = 0; ri < layer.radials.length; ri++) {
-    if (quality === "study" && ri > 0 && ri % 24 === 0) {
+    if (quality === "study" && ri > 0 && ri % 48 === 0) {
       await Promise.resolve();
     }
     const radial = layer.radials[ri]!;
@@ -336,17 +333,12 @@ export async function renderLevel3PolarGates(
       const inner = Math.max(0, r0 - RANGE_OVERLAP_KM);
       if (outer <= inner) continue;
 
-      const p1 = destination(lat, lon, az0, inner);
-      const p2 = destination(lat, lon, az1, inner);
-      const p3 = destination(lat, lon, az1, outer);
-      const p4 = destination(lat, lon, az0, outer);
+      const [x1, y1] = polarXY(az0, inner);
+      const [x2, y2] = polarXY(az1, inner);
+      const [x3, y3] = polarXY(az1, outer);
+      const [x4, y4] = polarXY(az0, outer);
 
-      const [x1, y1] = project(p1.lat, p1.lon);
-      const [x2, y2] = project(p2.lat, p2.lon);
-      const [x3, y3] = project(p3.lat, p3.lon);
-      const [x4, y4] = project(p4.lat, p4.lon);
-
-      fillConvexQuad(buf, width, height, x1, y1, x2, y2, x3, y3, x4, y4, color);
+      fillConvexQuad(buf, size, size, x1, y1, x2, y2, x3, y3, x4, y4, color);
     }
   }
 
@@ -360,7 +352,7 @@ export async function renderLevel3PolarGates(
   };
 }
 
-/** Render ODIM SCAN as hard geographic gate wedges. */
+/** Paint OPERA ODIM gates in polar space for ImageOverlay. */
 export async function renderOdimPolarGates(
   scan: OdimScanMeta,
   stops: ColorStop[],
@@ -370,42 +362,43 @@ export async function renderOdimPolarGates(
 ): Promise<PolarRenderResult> {
   const lut = stopsToDbzUint32LUT(stops, reflectivity, fade);
   const bounds = odimCoverageBounds(scan);
-  const { lat, lon, nbins, nrays, rstart, rscale, a1gate, values, nodata, undetect, gain, offset } =
+  const { nbins, nrays, rstart, rscale, a1gate, values, nodata, undetect, gain, offset } =
     scan;
   const maxRangeKm = Math.max(1, (rstart + nbins * rscale) / 1000);
   if (nrays <= 0 || nbins <= 0) return { dataUrl: "", bounds };
 
-  const south = bounds[0][0];
-  const west = bounds[0][1];
-  const north = bounds[1][0];
-  const east = bounds[1][1];
-  const latSpan = Math.max(0.01, north - south);
-  const lonSpan = Math.max(0.01, east - west);
-  const { width, height } = geographicCanvasSize(lat, latSpan, lonSpan, maxSize);
+  const size = Math.max(256, Math.min(maxSize, POLAR_GATE_STUDY_SIZE));
   const quality: "preview" | "study" =
-    Math.max(width, height) >= POLAR_GATE_STUDY_SIZE * 0.75 ? "study" : "preview";
+    size >= POLAR_GATE_STUDY_SIZE * 0.75 ? "study" : "preview";
 
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = size;
+  canvas.height = size;
   const ctx = canvas.getContext("2d");
   if (!ctx) return { dataUrl: "", bounds };
 
-  const imageData = ctx.createImageData(width, height);
+  const imageData = ctx.createImageData(size, size);
   const buf = new Uint32Array(
     imageData.data.buffer,
     imageData.data.byteOffset,
-    width * height,
+    size * size,
   );
 
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+  const pxPerKm = (size / 2 - 2) / maxRangeKm;
   const azStep = 360 / nrays;
-  const AZ_OVERLAP = azStep * 0.12;
-  const RANGE_OVERLAP_KM = Math.max(0.02, (rscale / 1000) * 0.15);
-  const project = (gLat: number, gLon: number) =>
-    projectToCanvas(gLat, gLon, north, west, latSpan, lonSpan, width, height);
+  const AZ_OVERLAP = azStep * 0.1;
+  const RANGE_OVERLAP_KM = Math.max(0.02, (rscale / 1000) * 0.12);
+
+  const polarXY = (azDeg: number, rangeKm: number): [number, number] => {
+    const rad = azDeg * DEG;
+    const d = rangeKm * pxPerKm;
+    return [cx + Math.sin(rad) * d, cy - Math.cos(rad) * d];
+  };
 
   for (let ray = 0; ray < nrays; ray++) {
-    if (quality === "study" && ray > 0 && ray % 24 === 0) {
+    if (quality === "study" && ray > 0 && ray % 48 === 0) {
       await Promise.resolve();
     }
     const az = (a1gate + ray * azStep) % 360;
@@ -427,17 +420,12 @@ export async function renderOdimPolarGates(
       const inner = Math.max(0, r0 - RANGE_OVERLAP_KM);
       if (outer <= inner) continue;
 
-      const p1 = destination(lat, lon, az0, inner);
-      const p2 = destination(lat, lon, az1, inner);
-      const p3 = destination(lat, lon, az1, outer);
-      const p4 = destination(lat, lon, az0, outer);
+      const [x1, y1] = polarXY(az0, inner);
+      const [x2, y2] = polarXY(az1, inner);
+      const [x3, y3] = polarXY(az1, outer);
+      const [x4, y4] = polarXY(az0, outer);
 
-      const [x1, y1] = project(p1.lat, p1.lon);
-      const [x2, y2] = project(p2.lat, p2.lon);
-      const [x3, y3] = project(p3.lat, p3.lon);
-      const [x4, y4] = project(p4.lat, p4.lon);
-
-      fillConvexQuad(buf, width, height, x1, y1, x2, y2, x3, y3, x4, y4, color);
+      fillConvexQuad(buf, size, size, x1, y1, x2, y2, x3, y3, x4, y4, color);
     }
   }
 

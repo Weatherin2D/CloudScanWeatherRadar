@@ -171,10 +171,9 @@
 }
 
 /* Geographic polar ImageOverlays — hard nearest-neighbor gates (no bilinear smear) */
+/* Station polar ImageOverlays — smooth scale (avoid pixelated salt/pepper) */
 .leaflet-image-layer.radar-polar-overlay {
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
-  image-rendering: -moz-crisp-edges;
+  image-rendering: auto;
 }
 
 .radar-polar-canvas {

@@ -205,7 +205,13 @@ async function canvasToObjectUrl(canvas: HTMLCanvasElement): Promise<{
   isObjectUrl: boolean;
 }> {
   const blob = await new Promise<Blob | null>((resolve) => {
-    canvas.toBlob((b) => resolve(b), "image/png");
+    canvas.toBlob((webp) => {
+      if (webp && webp.size > 0) {
+        resolve(webp);
+        return;
+      }
+      canvas.toBlob((png) => resolve(png), "image/png");
+    }, "image/webp", 0.9);
   });
   if (!blob) {
     return { dataUrl: canvas.toDataURL("image/png"), isObjectUrl: false };

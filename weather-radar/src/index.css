@@ -170,11 +170,14 @@
   image-rendering: -moz-crisp-edges;
 }
 
-/* Geographic polar ImageOverlays — hard nearest-neighbor gates (no bilinear smear) */
+/* Geographic polar ImageOverlays — hard nearest-neighbor gates (no bilinear smear).
+   Promote to its own compositor layer so pan/zoom stay transform-only. */
 .leaflet-image-layer.radar-polar-overlay {
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   image-rendering: -moz-crisp-edges;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
 .radar-polar-canvas {

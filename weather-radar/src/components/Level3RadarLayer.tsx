@@ -1,9 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useMemo } from "react";
 import type { ColorStop, ReflectivityFadeSettings } from "@/lib/palPalette";
+import { paletteCacheKey } from "@/lib/palPalette";
 import { level3ObjectUrl, type Level3Frame } from "@/lib/level3Radar";
 import { loadParsedLevel3 } from "@/lib/level3ParsedCache";
-import type { Level3Parsed } from "@/lib/level3Parse";
-import PolarSweepCanvasLayer, { type PolarSweepData } from "./PolarSweepCanvasLayer";
+import { loadPolarFrameCached } from "@/lib/polarFrameCache";
+import {
+  POLAR_GATE_PREVIEW_SIZE,
+  POLAR_GATE_STUDY_SIZE,
+  renderLevel3PolarGates,
+  type PolarRenderResult,
+} from "@/lib/renderPolar";
+import PolarRadarLayer, { type PolarLoadQuality } from "./PolarRadarLayer";
 
 interface Props {
   frames: Level3Frame[];
@@ -14,11 +21,9 @@ interface Props {
   reflectivityFade?: ReflectivityFadeSettings;
 }
 
-const PREFETCH_CONCURRENCY = 2;
-
 /**
- * Station Level-III: parse/cache sweeps and draw in map space.
- * Holds the last good frame so imagery never blanks while the next loads.
+ * Level-III station radar via Leaflet ImageOverlay.
+ * Pan/zoom are instant (CSS transform); no post-move canvas redraw.
  */
 export default function Level3RadarLayer({
   frames,
@@ -28,94 +33,47 @@ export default function Level3RadarLayer({
   reflectivity = false,
   reflectivityFade,
 }: Props) {
-  const [sweep, setSweep] = useState<PolarSweepData | null>(null);
-  const cacheRef = useRef(new Map<string, Level3Parsed>());
-  const framesRef = useRef(frames);
-  const lastGoodRef = useRef<PolarSweepData | null>(null);
-  framesRef.current = frames;
+  const palKey = useMemo(
+    () => paletteCacheKey(stops, reflectivity, reflectivityFade),
+    [stops, reflectivity, reflectivityFade],
+  );
 
-  const activeKey = frames[frameIndex]?.key ?? frames.at(-1)?.key ?? null;
-  const scope = frames[0]?.key?.split("_").slice(0, 2).join("_") ?? "";
+  const loadFrame = useCallback(
+    async (
+      frame: Level3Frame & { id: string },
+      quality: PolarLoadQuality = "preview",
+    ): Promise<PolarRenderResult | null> => {
+      const size = quality === "study" ? POLAR_GATE_STUDY_SIZE : POLAR_GATE_PREVIEW_SIZE;
+      const cacheKey = `l3:g4:${quality}:${frame.key}:${palKey}`;
+      return loadPolarFrameCached(cacheKey, async () => {
+        const parsed = await loadParsedLevel3(frame.key, level3ObjectUrl(frame.key));
+        if (!parsed) return null;
+        return renderLevel3PolarGates(
+          parsed.layer,
+          parsed.latitude,
+          parsed.longitude,
+          stops,
+          size,
+          reflectivity,
+          reflectivityFade,
+        );
+      });
+    },
+    [stops, reflectivity, reflectivityFade, palKey],
+  );
 
-  useEffect(() => {
-    cacheRef.current.clear();
-    // Keep lastGood visible across product/station until first new frame arrives
-  }, [scope]);
-
-  useEffect(() => {
-    if (!activeKey) return;
-
-    let cancelled = false;
-
-    const loadOne = async (key: string) => {
-      const hit = cacheRef.current.get(key);
-      if (hit) return hit;
-      const parsed = await loadParsedLevel3(key, level3ObjectUrl(key));
-      if (parsed) cacheRef.current.set(key, parsed);
-      return parsed;
-    };
-
-    const show = (parsed: Level3Parsed) => {
-      const next: PolarSweepData = { kind: "level3", parsed };
-      lastGoodRef.current = next;
-      setSweep(next);
-    };
-
-    const cached = cacheRef.current.get(activeKey);
-    if (cached) show(cached);
-    else if (lastGoodRef.current) setSweep(lastGoodRef.current);
-
-    const run = async () => {
-      const parsed = await loadOne(activeKey);
-      if (cancelled) return;
-      if (parsed) show(parsed);
-
-      // Prefetch full timeline with limited concurrency
-      const list = framesRef.current;
-      const idx = list.findIndex((f) => f.key === activeKey);
-      const order: string[] = [];
-      if (idx >= 0) {
-        for (const d of [1, -1, 2, -2, 3, -3]) {
-          const f = list[(idx + d + list.length) % list.length];
-          if (f) order.push(f.key);
-        }
-        for (const f of list) {
-          if (!order.includes(f.key)) order.push(f.key);
-        }
-      } else {
-        for (const f of list) order.push(f.key);
-      }
-
-      let cursor = 0;
-      let running = 0;
-      const pump = () => {
-        if (cancelled) return;
-        while (running < PREFETCH_CONCURRENCY && cursor < order.length) {
-          const key = order[cursor++]!;
-          if (cacheRef.current.has(key)) continue;
-          running++;
-          void loadOne(key).finally(() => {
-            running--;
-            pump();
-          });
-        }
-      };
-      pump();
-    };
-
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeKey, frames]);
+  const polarFrames = useMemo(
+    () => frames.map((f) => ({ ...f, id: f.key })),
+    [frames],
+  );
 
   return (
-    <PolarSweepCanvasLayer
-      sweep={sweep ?? lastGoodRef.current}
+    <PolarRadarLayer
+      frames={polarFrames}
+      frameIndex={frameIndex}
       opacity={opacity}
       stops={stops}
-      reflectivity={reflectivity}
-      reflectivityFade={reflectivityFade}
+      loadFrame={loadFrame}
     />
   );
 }

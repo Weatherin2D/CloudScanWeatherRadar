@@ -22,7 +22,7 @@ interface Props<T extends PolarFrame> {
   ) => Promise<PolarRenderResult | null>;
 }
 
-const PREFETCH_AFTER_FIRST = 2;
+const PREFETCH_AFTER_FIRST = 3;
 const OVERLAY_CLASS = "radar-polar-overlay";
 
 export default function PolarRadarLayer<T extends PolarFrame>({
@@ -166,7 +166,7 @@ export default function PolarRadarLayer<T extends PolarFrame>({
     };
   }, [frames, loadFrame]);
 
-  // Upgrade the visible frame to study quality after preview is on screen.
+  // Upgrade active frame to study quality after preview — idle so it won't block first paint.
   useEffect(() => {
     if (!activeId) return;
     const existing = cacheRef.current.get(activeId);
@@ -179,7 +179,18 @@ export default function PolarRadarLayer<T extends PolarFrame>({
     if (!frame) return;
     const gen = ++studyGenRef.current;
 
-    // Ensure preview is loading/shown, then upgrade.
+    const whenIdle = () =>
+      new Promise<void>((resolve) => {
+        const ric = (window as Window & {
+          requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+        }).requestIdleCallback;
+        if (typeof ric === "function") {
+          ric(() => resolve(), { timeout: 500 });
+        } else {
+          setTimeout(resolve, 80);
+        }
+      });
+
     const run = async () => {
       if (!cacheRef.current.has(activeId)) {
         const preview = await loadFrameRef.current(frame, "preview");
@@ -189,6 +200,9 @@ export default function PolarRadarLayer<T extends PolarFrame>({
           bumpCache((n) => n + 1);
         }
       }
+
+      await whenIdle();
+      if (gen !== studyGenRef.current || activeIdRef.current !== activeId) return;
 
       const study = await loadFrameRef.current(frame, "study");
       if (gen !== studyGenRef.current || !study?.dataUrl) return;

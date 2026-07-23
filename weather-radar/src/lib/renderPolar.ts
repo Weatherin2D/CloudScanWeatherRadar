@@ -32,14 +32,14 @@ export interface PolarRenderResult {
 
 export type GeographicPolarFrame = PolarRenderResult;
 
-/** Fast first-paint polar raster (animation / cold start). */
-export const POLAR_GATE_PREVIEW_SIZE = 1024;
+/** Fast first-paint polar raster (cold start / animation). */
+export const POLAR_GATE_PREVIEW_SIZE = 768;
 
 /**
- * Study-quality polar raster — ~0.3 km/px over a 460 km N0B sweep,
- * close to Level-III 0.25 km gates so storm structure stays sharp when zoomed.
+ * Study-quality polar raster. 2048 balances zoom detail vs encode/load time;
+ * Leaflet ImageOverlay scales instantly on pan/zoom (no post-move redraw).
  */
-export const POLAR_GATE_STUDY_SIZE = 3072;
+export const POLAR_GATE_STUDY_SIZE = 2048;
 
 /** @deprecated Prefer PREVIEW / STUDY sizes. */
 export const POLAR_GATE_MAX_SIZE = POLAR_GATE_STUDY_SIZE;
